@@ -91,48 +91,48 @@ def main() -> None:
 
         jpx_y1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
                          0, args.nk, 0, params["ny"], nzh)
-        jpx_y2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, params["ny"] - args.nk, 0, params["ny"], nzh)
+        #jpx_y2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
+        #                 0, params["ny"] - args.nk, 0, params["ny"], nzh)
         
         jpx_z1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
                          0, 0, args.nk, params["ny"], nzh)
-        jpx_z2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, 0, params["nz"] - args.nk, params["ny"], nzh)
+        #jpx_z2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
+        #                 0, 0, params["nz"] - args.nk, params["ny"], nzh)
         
         jpy_x1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
                          args.nk, 0, 0, params["ny"], nzh)
-        jpy_x2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         params["nx"] - args.nk, 0, 0, params["ny"], nzh)
+        #jpy_x2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
+        #                 params["nx"] - args.nk, 0, 0, params["ny"], nzh)
         
         jpy_z1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
                          0, 0, args.nk, params["ny"], nzh)
-        jpy_z2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         0, 0, params["nz"] - args.nk, params["ny"], nzh)
+        #jpy_z2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
+        #                 0, 0, params["nz"] - args.nk, params["ny"], nzh)
 
         jpz_x1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
                             args.nk, 0, 0, params["ny"], nzh)
-        jpz_x2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                            params["nx"] - args.nk, 0, 0, params["ny"], nzh)
+        #jpz_x2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
+        #                    params["nx"] - args.nk, 0, 0, params["ny"], nzh)
         
         jpz_y1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
                          0, args.nk, 0, params["ny"], nzh)
-        jpz_y2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                         0, params["ny"] - args.nk, 0, params["ny"], nzh)
+        #jpz_y2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
+        #                 0, params["ny"] - args.nk, 0, params["ny"], nzh)
         
         corr_jpx_y1 = time_correlator(jpx_y1)
-        corr_jpx_y2 = time_correlator(jpx_y2)
+        #corr_jpx_y2 = time_correlator(jpx_y2)
         corr_jpx_z1 = time_correlator(jpx_z1)
-        corr_jpx_z2 = time_correlator(jpx_z2)
+        #corr_jpx_z2 = time_correlator(jpx_z2)
 
         corr_jpy_x1 = time_correlator(jpy_x1)
-        corr_jpy_x2 = time_correlator(jpy_x2)
+        #corr_jpy_x2 = time_correlator(jpy_x2)
         corr_jpy_z1 = time_correlator(jpy_z1)
-        corr_jpy_z2 = time_correlator(jpy_z2)
+        #corr_jpy_z2 = time_correlator(jpy_z2)
 
         corr_jpz_x1 = time_correlator(jpz_x1)
-        corr_jpz_x2 = time_correlator(jpz_x2)
+        #corr_jpz_x2 = time_correlator(jpz_x2)
         corr_jpz_y1 = time_correlator(jpz_y1)
-        corr_jpz_y2 = time_correlator(jpz_y2)
+        #corr_jpz_y2 = time_correlator(jpz_y2)
 
         # Sum all of them and divide by twelve to get the average correlator
         #correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
