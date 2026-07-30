@@ -135,9 +135,12 @@ def main() -> None:
         corr_jpz_y2 = time_correlator(jpz_y2)
 
         # Sum all of them and divide by twelve to get the average correlator
-        correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
-                      corr_jpy_x1 + corr_jpy_x2 + corr_jpy_z1 + corr_jpy_z2 +
-                      corr_jpz_x1 + corr_jpz_x2 + corr_jpz_y1 + corr_jpz_y2) / 12.0
+        #correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
+        #              corr_jpy_x1 + corr_jpy_x2 + corr_jpy_z1 + corr_jpy_z2 +
+        #              corr_jpz_x1 + corr_jpz_x2 + corr_jpz_y1 + corr_jpz_y2) / 12.0
+        correlator = (corr_jpx_y1 + corr_jpx_z1 +
+                            corr_jpy_x1 + corr_jpy_z1 +
+                            corr_jpz_x1 + corr_jpz_y1) / 6.0
 
         time_diff = np.arange(len(corr_jpx_y1)) * params["dt"]
 
