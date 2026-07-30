@@ -59,6 +59,10 @@ def main() -> None:
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                          metavar=("YMIN", "YMAX"),
                          help="y-axis limits of the plot")
+    parser.add_argument("--xlog", action="store_true",
+                         help="Use a logarithmic x-axis")
+    parser.add_argument("--ylog", action="store_true",
+                         help="Use a logarithmic y-axis")
     args = parser.parse_args()
 
     obs_name = parse_obs_name(args.input_dir)
@@ -120,16 +124,18 @@ def main() -> None:
     ax.plot(time_diff, theoryR, "--", color="black",
             label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$")
     ax.set_xlabel(r"$t$")
-    ax.set_ylabel(r"$\frac{1}{T}\sum_T  \langle j_{x}^{*}(T+t,\mathbf{k}) j_{x}(T,\mathbf{k})\rangle$,  $k=$"
+    ax.set_ylabel(r"$\frac{1}{T}\sum_T \frac{1}{6}\sum_{l \neq m} \langle j_{l}^{*}(T+t,k\mathbf{e}_m) j_{l}(T,k\mathbf{e}_m)\rangle$,  $k=$"
                   f"{meta['nk']:.0f}"
                   r"$\pi/N$")
                   #f"(nkx={meta['nkx']:.0f}, nky={meta['nky']:.0f}, nkz={meta['nkz']:.0f})")
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
-    # ax.set_xscale('log', base=10)
+    if args.xlog:
+        ax.set_xscale('log')
     if args.ylim is not None:
         ax.set_ylim(*args.ylim)
-    # ax.set_yscale('log', base=10)
+    if args.ylog:
+        ax.set_yscale('log')
     # ax.set_ylim(1e-4, 1e1)
     # ax.set_ylim(-0.2*theory[0], 1.2*theory[0])
     ax.legend()
