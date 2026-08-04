@@ -45,11 +45,23 @@ def parse_run_name(run_dir: Path) -> dict:
 
 
 def load_mode(re_path: Path, im_path: Path, nkx: int, nky: int, nkz: int,
-              ny: int, nzh: int) -> np.ndarray:
+              nx: int, ny: int, nz: int) -> np.ndarray:
+    nzh = nz // 2 + 1
+    nkx %= nx
+    nky %= ny
+    nkz %= nz
+    # The r2c layout only stores nkz = 0..nz//2; modes in the upper half are
+    # the Hermitian conjugates F(nkx,nky,nkz) = conj(F(-nkx,-nky,nz-nkz)).
+    conjugate = nkz >= nzh
+    if conjugate:
+        nkx = (nx - nkx) % nx
+        nky = (ny - nky) % ny
+        nkz = nz - nkz
     idx = nkx * ny * nzh + nky * nzh + nkz
     re = np.loadtxt(re_path, usecols=idx)
     im = np.loadtxt(im_path, usecols=idx)
-    return re + 1j * im
+    mode = re + 1j * im
+    return np.conj(mode) if conjugate else mode
 
 
 def time_correlator(jpi: np.ndarray) -> np.ndarray:
@@ -75,7 +87,6 @@ def main() -> None:
 
     for run_dir in args.run_dirs:
         params = parse_run_name(run_dir)
-        nzh = params["nz"] // 2 + 1
 
         nx = params['nx']
         ny = params['ny']
@@ -90,57 +101,54 @@ def main() -> None:
                   "time_diff Re Im")
 
         jpx_y1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, args.nk, 0, params["ny"], nzh)
-        #jpx_y2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-        #                 0, params["ny"] - args.nk, 0, params["ny"], nzh)
+                         0, args.nk, 0, nx, ny, nz)
+        jpx_y2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
+                        0, params["ny"] - args.nk, 0, nx, ny, nz)
         
         jpx_z1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, 0, args.nk, params["ny"], nzh)
-        #jpx_z2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-        #                 0, 0, params["nz"] - args.nk, params["ny"], nzh)
+                         0, 0, args.nk, nx, ny, nz)
+        jpx_z2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
+                        0, 0, params["nz"] - args.nk, nx, ny, nz)
         
         jpy_x1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         args.nk, 0, 0, params["ny"], nzh)
-        #jpy_x2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-        #                 params["nx"] - args.nk, 0, 0, params["ny"], nzh)
+                         args.nk, 0, 0, nx, ny, nz)
+        jpy_x2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
+                        params["nx"] - args.nk, 0, 0, nx, ny, nz)
         
         jpy_z1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         0, 0, args.nk, params["ny"], nzh)
-        #jpy_z2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-        #                 0, 0, params["nz"] - args.nk, params["ny"], nzh)
+                         0, 0, args.nk, nx, ny, nz)
+        jpy_z2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
+                        0, 0, params["nz"] - args.nk, nx, ny, nz)
 
         jpz_x1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                            args.nk, 0, 0, params["ny"], nzh)
-        #jpz_x2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-        #                    params["nx"] - args.nk, 0, 0, params["ny"], nzh)
+                            args.nk, 0, 0, nx, ny, nz)
+        jpz_x2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
+                           params["nx"] - args.nk, 0, 0, nx, ny, nz)
         
         jpz_y1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                         0, args.nk, 0, params["ny"], nzh)
-        #jpz_y2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-        #                 0, params["ny"] - args.nk, 0, params["ny"], nzh)
+                         0, args.nk, 0, nx, ny, nz)
+        jpz_y2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
+                        0, params["ny"] - args.nk, 0, nx, ny, nz)
         
         corr_jpx_y1 = time_correlator(jpx_y1)
-        #corr_jpx_y2 = time_correlator(jpx_y2)
+        corr_jpx_y2 = time_correlator(jpx_y2)
         corr_jpx_z1 = time_correlator(jpx_z1)
-        #corr_jpx_z2 = time_correlator(jpx_z2)
+        corr_jpx_z2 = time_correlator(jpx_z2)
 
         corr_jpy_x1 = time_correlator(jpy_x1)
-        #corr_jpy_x2 = time_correlator(jpy_x2)
+        corr_jpy_x2 = time_correlator(jpy_x2)
         corr_jpy_z1 = time_correlator(jpy_z1)
-        #corr_jpy_z2 = time_correlator(jpy_z2)
+        corr_jpy_z2 = time_correlator(jpy_z2)
 
         corr_jpz_x1 = time_correlator(jpz_x1)
-        #corr_jpz_x2 = time_correlator(jpz_x2)
+        corr_jpz_x2 = time_correlator(jpz_x2)
         corr_jpz_y1 = time_correlator(jpz_y1)
-        #corr_jpz_y2 = time_correlator(jpz_y2)
+        corr_jpz_y2 = time_correlator(jpz_y2)
 
         # Sum all of them and divide by twelve to get the average correlator
-        #correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
-        #              corr_jpy_x1 + corr_jpy_x2 + corr_jpy_z1 + corr_jpy_z2 +
-        #              corr_jpz_x1 + corr_jpz_x2 + corr_jpz_y1 + corr_jpz_y2) / 12.0
-        correlator = (corr_jpx_y1 + corr_jpx_z1 +
-                            corr_jpy_x1 + corr_jpy_z1 +
-                            corr_jpz_x1 + corr_jpz_y1) / 6.0
+        correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
+                     corr_jpy_x1 + corr_jpy_x2 + corr_jpy_z1 + corr_jpy_z2 +
+                     corr_jpz_x1 + corr_jpz_x2 + corr_jpz_y1 + corr_jpz_y2) / 12.0
 
         time_diff = np.arange(len(corr_jpx_y1)) * params["dt"]
 
