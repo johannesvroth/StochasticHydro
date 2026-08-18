@@ -13,7 +13,9 @@ an optional trailing "x" for --no-ideal-step runs); the shear viscosity eta
 is parsed from that name. With a single directory, the real and imaginary
 part are plotted; with several directories, the real parts of all of them
 are drawn into the same plot, each with its own theory curves in the same
-color (dashed: bare eta, dotted: renormalized eta)."""
+color (dashed: bare eta, dotted: renormalized eta). The correlation times
+1/Gamma with Gamma = (eta/rho)(1+eta_reg_uv)k_hat^2 for the bare (dashed)
+and the renormalized (dotted) shear viscosity are drawn as vertical lines."""
 
 import argparse
 import re
@@ -150,6 +152,10 @@ def main() -> None:
                     label=r"$\exp(-(\eta/\rho) \, \hat{\mathbf{k}}^2\, t)$")
             ax.plot(time_diff, theoryR, "--", color="black",
                     label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$")
+            ax.axvline(1.0/damp, linestyle="--", color="red", alpha=0.7,
+                       label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$")
+            ax.axvline(1.0/dampR, linestyle=":", color="black", alpha=0.7,
+                       label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$")
         else:
             first = input_dir is args.input_dirs[0]
             label = input_dir.name.removeprefix("avg-jp-time-corr-")
@@ -161,6 +167,10 @@ def main() -> None:
                     label=r"$\exp(-(\eta/\rho) \, \hat{\mathbf{k}}^2\, t)$" if first else None)
             ax.plot(time_diff, theoryR, ":", color=line.get_color(), alpha=0.7,
                     label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$" if first else None)
+            ax.axvline(1.0/damp, linestyle="--", color=line.get_color(), alpha=0.7,
+                       label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$" if first else None)
+            ax.axvline(1.0/dampR, linestyle=":", color=line.get_color(), alpha=0.7,
+                       label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$" if first else None)
 
     ax.set_xlabel(r"$t$")
     ylabel = r"$\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
