@@ -18,7 +18,13 @@ all of them are drawn into the same plot. For each directory the theory
 expectation, the running integral T rho Nsites (1-exp(-Gamma T))/Gamma with
 Gamma = (eta/rho)(1+eta_reg_uv)k_hat^2, is drawn for the bare (dashed) and
 the renormalized (dotted) shear viscosity, and the corresponding correlation
-times 1/Gamma as two vertical lines."""
+times 1/Gamma as two vertical lines.
+
+The T axis is scaled by the bare correlation time of the mode,
+tau = rho/(eta (1+eta_reg_uv) k_hat^2), so that the bare exponential decay
+reaches 1/e at T/tau = 1 for every eta and k and curves from different
+directories can be compared directly. Time arguments (fit and plateau
+windows) stay in units of t; only the axis is scaled."""
 
 import argparse
 import re
@@ -47,6 +53,40 @@ def parse_obs_name(input_dir: Path) -> dict:
             "nk": int(m["nk"])}
 
 
+def lattice_label(nx: int, ny: int, nz: int) -> str:
+    r"""LaTeX for the lattice size: $32^3$ for a cubic lattice, $32^2 \times 10$
+    when one direction differs from the two others."""
+    dims = (nx, ny, nz)
+    if nx == ny == nz:
+        return rf"${nx}^3$"
+    for d in dims:
+        if dims.count(d) == 2:
+            odd = next(o for o in dims if o != d)
+            return rf"${d}^2 \times {odd}$"
+    return rf"${nx} \times {ny} \times {nz}$"
+
+
+def legend_label(input_dir: Path, with_nk: bool = False) -> str:
+    r"""Legend entry for one directory, e.g.
+    "$32^3$, dt = 10, $\eta = 0.0707107$, $\Lambda = 0.4$".
+
+    The numbers are taken verbatim from the directory name, so the legend
+    shows exactly what the run used. The mode index is appended only when
+    asked for, i.e. when the directories do not share one and the y label
+    cannot carry it, and --no-ideal-step runs are marked as such; without
+    that two directories differing only in nk (or in the trailing "x") would
+    get the same legend entry."""
+    m = OBS_NAME_RE.match(input_dir.name)
+    label = (f"{lattice_label(int(m['nx']), int(m['ny']), int(m['nz']))}, "
+             f"dt = {m['dt']}, "
+             rf"$\eta = {m['eta']}$, $\Lambda = {m['lam']}$")
+    if with_nk:
+        label += rf", $n_k = {m['nk']}$"
+    if m["suffix"] == "x":
+        label += ", no ideal step"
+    return label
+
+
 def read_header(path: Path) -> dict:
     with open(path) as f:
         first_line = f.readline().lstrip("#").strip()
@@ -70,7 +110,8 @@ def main() -> None:
                               "(with -cmp<n> appended when several input dirs are given)")
     parser.add_argument("--xlim", type=float, nargs=2, default=None,
                          metavar=("XMIN", "XMAX"),
-                         help="x-axis limits of the plot")
+                         help="x-axis limits of the plot, in units of the bare "
+                              "correlation time")
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                          metavar=("YMIN", "YMAX"),
                          help="y-axis limits of the plot")
@@ -88,6 +129,10 @@ def main() -> None:
         args.output.parent.mkdir(exist_ok=True)
 
     single = len(args.input_dirs) == 1
+    # The mode index goes into the legend only when the y label
+    # cannot carry it, i.e. when the directories do not share one.
+    nk_varies = len({parse_obs_name(d)['nk']
+                     for d in args.input_dirs}) > 1
     fig, ax = plt.subplots()
     nks = []
     for input_dir in args.input_dirs:
@@ -111,10 +156,20 @@ def main() -> None:
 
         k_hat = 2.0*np.sin(2 * np.pi * meta["nk"] / meta["nx"] * 0.5)
         damp = eta*(1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
+        # The time axis is scaled by the bare correlation time of the mode,
+        # tau_bare = 1/damp = rho/(eta (1+eta_reg_uv) k_hat^2), so that the
+        # bare exponential decays as exp(-t/tau_bare) whatever eta and k are.
+        tau_bare = 1.0/damp
 
-        coeff = 0.0236416
-        etaR = np.sqrt(eta**2 + 2.0*coeff*args.temp*args.mass_density*lam)
-        dampR = etaR*(1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
+        coeff1 = 0.0212045
+        coeff2 = 0.0201104
+        coeff_inf = 0.0236416  # L = infinity
+        etaR1 = np.sqrt(eta**2 + 2.0*coeff1*args.temp*args.mass_density*lam)
+        etaR2 = np.sqrt(eta**2 + 2.0*coeff2*args.temp*args.mass_density*lam)
+        etaR_inf = np.sqrt(eta**2 + 2.0*coeff_inf*args.temp*args.mass_density*lam)
+        dampR1 = etaR1*(1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
+        dampR2 = etaR2*(1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
+        dampR_inf = etaR_inf*(1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
 
         # f(0) = T rho Nsites (the integrand is not divided by Nsites).
         nsites = meta["nx"] * meta["ny"] * meta["nz"]
@@ -134,6 +189,7 @@ def main() -> None:
         n_min = min(len(d) for d in integrals)
         integrals = np.stack([d[:n_min] for d in integrals])
         time_diff = time_diff[:n_min]
+        t_scaled = time_diff/tau_bare
 
         mean = integrals.mean(axis=0)
         n_runs = len(integrals)
@@ -145,32 +201,39 @@ def main() -> None:
         if single:
             label = r"$\int_0^T \mathrm{d}t\, \mathrm{Re}$"
         else:
-            label = input_dir.name.removeprefix("avg-jp-time-corr-")
-        line, = ax.plot(time_diff, mean, label=label)
-        ax.fill_between(time_diff, mean - sem, mean + sem,
+            label = legend_label(input_dir, with_nk=nk_varies)
+        line, = ax.plot(t_scaled, mean, label=label)
+        ax.fill_between(t_scaled, mean - sem, mean + sem,
                          color=line.get_color(), alpha=0.3)
 
         # Running integral of the theory curve f(0) exp(-damp t).
         theory = f0 * (1.0 - np.exp(-damp * time_diff)) / damp
-        theoryR = f0 * (1.0 - np.exp(-dampR * time_diff)) / dampR
+        theoryR1 = f0 * (1.0 - np.exp(-dampR1 * time_diff)) / dampR1
+        theoryR2 = f0 * (1.0 - np.exp(-dampR2 * time_diff)) / dampR2
+        theoryR_inf = f0 * (1.0 - np.exp(-dampR_inf * time_diff)) / dampR_inf
 
         first = input_dir is args.input_dirs[0]
         theory_color = "red" if single else line.get_color()
         theoryR_color = "black" if single else line.get_color()
-        ax.plot(time_diff, theory, "--", color=theory_color, alpha=0.7,
+        ax.plot(t_scaled, theory, "--", color=theory_color, alpha=0.7,
                 label=r"$T \rho V \int_0^T \mathrm{d}t\, e^{-(\eta/\rho) \, \hat{\mathbf{k}}^2 t}$"
                       if single or first else None)
-        ax.plot(time_diff, theoryR, ":", color=theoryR_color, alpha=0.7,
-                label=r"$T \rho V \int_0^T \mathrm{d}t\, e^{-(\eta_R/\rho) \, \hat{\mathbf{k}}^2 t}$"
+        ax.fill_between(t_scaled, theoryR1, theoryR2, color=theoryR_color, alpha=0.3,
+                        label=r"$T \rho V \int_0^T \mathrm{d}t\, e^{-(\eta_R/\rho) \, \hat{\mathbf{k}}^2 t}$"
+                              if single or first else None)
+        ax.plot(t_scaled, theoryR_inf, ":", color=theoryR_color, alpha=0.7,
+                label=r"$T \rho V \int_0^T \mathrm{d}t\, e^{-(\eta_R/\rho) \, \hat{\mathbf{k}}^2 t}$, $L=\infty$"
                       if single or first else None)
-        ax.axvline(1.0/damp, linestyle="--", color=theory_color, alpha=0.7,
+        ax.axvline(1.0, linestyle="--", color=theory_color, alpha=0.7,
                    label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$"
                          if single or first else None)
-        ax.axvline(1.0/dampR, linestyle=":", color=theoryR_color, alpha=0.7,
+        ax.axvspan(min(1.0/dampR1, 1.0/dampR2)/tau_bare,
+                   max(1.0/dampR1, 1.0/dampR2)/tau_bare,
+                   color=theoryR_color, alpha=0.3,
                    label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$"
                          if single or first else None)
 
-    ax.set_xlabel(r"$T$")
+    ax.set_xlabel(r"$T / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
     ylabel = r"$\int_0^T \mathrm{d}t\, \mathrm{Re}\,\frac{1}{T'}\sum_{T'} \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T'+t,\pm k\mathbf{e}_m) j_{l}(T',\pm k\mathbf{e}_m)\rangle$"
     if len(set(nks)) == 1:
         ylabel += r",  $k=$" f"{nks[0]:.0f}" r"$\pi/N$"

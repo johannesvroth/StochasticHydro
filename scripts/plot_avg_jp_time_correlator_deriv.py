@@ -17,7 +17,13 @@ is parsed from that name. With several directories, the log-derivatives of
 all of them are drawn into the same plot. For each directory the theory
 expectation is drawn as two horizontal lines, -(eta/rho)(1+eta_reg_uv)k_hat^2
 with the bare (dashed) and the renormalized (dotted) shear viscosity, and the
-corresponding correlation times 1/Gamma as two vertical lines."""
+corresponding correlation times 1/Gamma as two vertical lines.
+
+The t axis is scaled by the bare correlation time of the mode,
+tau = rho/(eta (1+eta_reg_uv) k_hat^2), so that the bare exponential decay
+reaches 1/e at t/tau = 1 for every eta and k and curves from different
+directories can be compared directly. Time arguments (fit and plateau
+windows) stay in units of t; only the axis is scaled."""
 
 import argparse
 import re
@@ -45,6 +51,62 @@ def parse_obs_name(input_dir: Path) -> dict:
             "nk": int(m["nk"])}
 
 
+def lattice_label(nx: int, ny: int, nz: int) -> str:
+    r"""LaTeX for the lattice size: $32^3$ for a cubic lattice, $32^2 \times 10$
+    when one direction differs from the two others."""
+    dims = (nx, ny, nz)
+    if nx == ny == nz:
+        return rf"${nx}^3$"
+    for d in dims:
+        if dims.count(d) == 2:
+            odd = next(o for o in dims if o != d)
+            return rf"${d}^2 \times {odd}$"
+    return rf"${nx} \times {ny} \times {nz}$"
+
+
+def label_hline(axis, y, text, color, x=0.01, below=False):
+    """Label a horizontal theory line next to the line itself instead of in
+    the legend: at the left edge of the axes, just above (or below) the
+    line. x is a fraction of the axes width, y a data coordinate."""
+    axis.annotate(text, xy=(x, y), xycoords=axis.get_yaxis_transform(),
+                  xytext=(0, -3 if below else 3), textcoords="offset points",
+                  ha="left" if x < 0.5 else "right",
+                  va="top" if below else "bottom",
+                  color=color, fontsize="small")
+
+
+def label_vline(axis, x, text, color, y=0.02, on_left=True):
+    """Label a vertical theory line next to the line itself instead of in the
+    legend: rotated along the line, near the bottom of the axes, on its
+    right (on_left) or on its left. x is a data coordinate, y a fraction
+    of the axes height."""
+    axis.annotate(text, xy=(x, y), xycoords=axis.get_xaxis_transform(),
+                  xytext=(5, 0) if on_left else (-5, 0), textcoords="offset points", rotation=90,
+                  ha="left" if on_left else "right", va="bottom",
+                  color=color, fontsize="small")
+
+
+def legend_label(input_dir: Path, with_nk: bool = False) -> str:
+    r"""Legend entry for one directory, e.g.
+    "$32^3$, dt = 10, $\eta = 0.0707107$, $\Lambda = 0.4$".
+
+    The numbers are taken verbatim from the directory name, so the legend
+    shows exactly what the run used. The mode index is appended only when
+    asked for, i.e. when the directories do not share one and the y label
+    cannot carry it, and --no-ideal-step runs are marked as such; without
+    that two directories differing only in nk (or in the trailing "x") would
+    get the same legend entry."""
+    m = OBS_NAME_RE.match(input_dir.name)
+    label = (f"{lattice_label(int(m['nx']), int(m['ny']), int(m['nz']))}, "
+             #f"dt = {m['dt']}, "
+             rf"$\eta = {m['eta']}$, $a\Lambda = {m['lam']}$")
+    if with_nk:
+        label += rf", $n_k = {m['nk']}$"
+    if m["suffix"] == "x":
+        label += ", no ideal step"
+    return label
+
+
 def read_header(path: Path) -> dict:
     with open(path) as f:
         first_line = f.readline().lstrip("#").strip()
@@ -69,7 +131,8 @@ def main() -> None:
                               "the noise), convert it to the renormalized shear "
                               "viscosity etaR = -<dln Re/dt>/(k_hat^2 "
                               "(1+eta_reg_uv)/rho), print etaR +- SEM, and draw "
-                              "the window and plateau level in the plot")
+                              "the window and plateau level in the plot; given "
+                              "in units of t, not of the scaled x axis")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
                          const=AUTO_OUTPUT,
                          help="Save the plot to this file instead of showing it; "
@@ -77,10 +140,12 @@ def main() -> None:
                               "(with -cmp<n> appended when several input dirs are given)")
     parser.add_argument("--xlim", type=float, nargs=2, default=None,
                          metavar=("XMIN", "XMAX"),
-                         help="x-axis limits of the plot")
+                         help="x-axis limits of the plot, in units of the bare "
+                              "correlation time")
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                          metavar=("YMIN", "YMAX"),
-                         help="y-axis limits of the plot")
+                         help="y-axis limits of the plot, in units of the bare "
+                              "damping rate 1/tau (the bare theory sits at -1)")
     parser.add_argument("--xlog", action="store_true",
                          help="Use a logarithmic x-axis")
     parser.add_argument("--ylog", action="store_true",
@@ -95,8 +160,13 @@ def main() -> None:
         args.output.parent.mkdir(exist_ok=True)
 
     single = len(args.input_dirs) == 1
+    # The mode index goes into the legend only when the y label
+    # cannot carry it, i.e. when the directories do not share one.
+    nk_varies = len({parse_obs_name(d)['nk']
+                     for d in args.input_dirs}) > 1
     fig, ax = plt.subplots()
     nks = []
+    plateau_spans = []
     for input_dir in args.input_dirs:
         obs_name = parse_obs_name(input_dir)
         eta = obs_name["eta"]
@@ -119,10 +189,20 @@ def main() -> None:
         k_hat = 2.0*np.sin(2 * np.pi * meta["nk"] / meta["nx"] * 0.5)
         damp_per_eta = (1+eta_reg_uv(k_hat**2)) / args.mass_density * k_hat**2
         damp = eta * damp_per_eta
+        # The time axis is scaled by the bare correlation time of the mode,
+        # tau_bare = 1/damp = rho/(eta (1+eta_reg_uv) k_hat^2), so that the
+        # bare exponential decays as exp(-t/tau_bare) whatever eta and k are.
+        tau_bare = 1.0/damp
 
-        coeff = 0.0236416
-        etaR = np.sqrt(eta**2 + 2.0*coeff*args.temp*args.mass_density*lam)
-        dampR = etaR * damp_per_eta
+        coeff1 = 0.0212045
+        coeff2 = 0.0201104
+        coeff_inf = 0.0236416  # L = infinity
+        etaR1 = np.sqrt(eta**2 + 2.0*coeff1*args.temp*args.mass_density*lam)
+        etaR2 = np.sqrt(eta**2 + 2.0*coeff2*args.temp*args.mass_density*lam)
+        etaR_inf = np.sqrt(eta**2 + 2.0*coeff_inf*args.temp*args.mass_density*lam)
+        dampR1 = etaR1 * damp_per_eta
+        dampR2 = etaR2 * damp_per_eta
+        dampR_inf = etaR_inf * damp_per_eta
 
         # Per-run log-derivative f'/f, then mean and SEM across runs. Only valid
         # at small t: once a run's f(t) decays into the noise and crosses zero,
@@ -138,6 +218,7 @@ def main() -> None:
         n_min = min(len(d) for d in log_derivatives)
         log_derivatives = np.stack([d[:n_min] for d in log_derivatives])
         time_diff = time_diff[:n_min]
+        t_scaled = time_diff/tau_bare
 
         mean = log_derivatives.mean(axis=0)
         n_runs = len(log_derivatives)
@@ -147,28 +228,59 @@ def main() -> None:
             sem = np.zeros(n_min)
 
         if single:
-            label = r"$\partial_t \ln \mathrm{Re}$"
+            label = r"$\tau\,\partial_t \ln \mathrm{Re}$"
         else:
-            label = input_dir.name.removeprefix("avg-jp-time-corr-")
-        line, = ax.plot(time_diff, mean, label=label)
-        ax.fill_between(time_diff, mean - sem, mean + sem,
+            label = legend_label(input_dir, with_nk=nk_varies)
+        # The log-derivative is scaled by the same tau_bare as the time
+        # axis, so it is d ln f/d(t/tau_bare): the bare rate sits at -1 and
+        # the renormalized one at -etaR/eta, whatever eta and k are.
+        line, = ax.plot(t_scaled, mean*tau_bare, label=label)
+        ax.fill_between(t_scaled, (mean - sem)*tau_bare, (mean + sem)*tau_bare,
                          color=line.get_color(), alpha=0.3)
 
         first = input_dir is args.input_dirs[0]
-        theory_color = "red" if single else line.get_color()
-        theoryR_color = "black" if single else line.get_color()
-        ax.axhline(-damp, linestyle="--", color=theory_color, alpha=0.7,
-                   label=r"$-(\eta/\rho) \, \hat{\mathbf{k}}^2$"
-                         if single or first else None)
-        ax.axhline(-dampR, linestyle=":", color=theoryR_color, alpha=0.7,
-                   label=r"$-(\eta_R/\rho) \, \hat{\mathbf{k}}^2$"
-                         if single or first else None)
-        ax.axvline(1.0/damp, linestyle="--", color=theory_color, alpha=0.7,
-                   label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$"
-                         if single or first else None)
-        ax.axvline(1.0/dampR, linestyle=":", color=theoryR_color, alpha=0.7,
-                   label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$"
-                         if single or first else None)
+        # Scaled by tau_bare, the bare rate sits at -1 and the bare
+        # correlation time at 1 for every directory, so those two lines are
+        # common to all of them: draw them once, in a color of their own
+        # rather than in one directory's.
+        # Theory is black, whatever the directory: the colors of the plot
+        # identify the data, and a theory line belongs to none of them in
+        # particular. Bare and renormalized are told apart by their line
+        # style and by the labels next to them.
+        theory_color = "black"
+        # The theory lines carry their label inside the plot, next to the
+        # line itself, so that they do not crowd out the data in the legend.
+        # Only the first directory labels them: the theory lines of several
+        # directories coincide or lie close together, so one label each is
+        # enough.
+        #if first:
+        #    ax.axhline(-1.0, linestyle="--", color=theory_color, alpha=0.7)
+        #    ax.axvline(1.0, linestyle="--", color=theory_color, alpha=0.7)
+        ax.axhspan(min(-dampR1, -dampR2)*tau_bare,
+                   max(-dampR1, -dampR2)*tau_bare,
+                   color=theory_color, alpha=0.3)
+        ax.axhline(-dampR_inf*tau_bare, linestyle=":", color=theory_color,
+                   alpha=0.7)
+        ax.axvspan(min(1.0/dampR1, 1.0/dampR2)/tau_bare,
+                   max(1.0/dampR1, 1.0/dampR2)/tau_bare,
+                   color=theory_color, alpha=0.3)
+        ax.axvline(1.0/(dampR_inf*tau_bare), linestyle=":", color=theory_color,
+                   alpha=0.7)
+        if single or first:
+            # label_hline(ax, -1.0, r"$-1$", theory_color)
+            # Anchored at the upper edge of the band, above it.
+            label_hline(ax, max(-dampR1, -dampR2)*tau_bare,
+                        r"$-\eta_R/\eta$ (rFRG), $L$ finite",
+                        theory_color)
+            # label_vline(ax, 1.0, r"$1$", theory_color)
+            label_vline(ax, max(1.0/dampR1, 1.0/dampR2)/tau_bare,
+                        r"$\eta/\eta_R$ (rFRG), $L$ finite", theory_color, on_left=True)
+            label_hline(ax, -dampR_inf*tau_bare,
+                        r"$-\eta_R/\eta$ (rFRG), $L=\infty$",
+                        theory_color, below=True)
+            label_vline(ax, 1.0/(dampR_inf*tau_bare),
+                        r"$\eta/\eta_R$ (rFRG), $L=\infty$",
+                        theory_color, on_left=False)
 
         if args.plateau_window is not None:
             t1, t2 = args.plateau_window
@@ -190,15 +302,19 @@ def main() -> None:
             print(f"{input_dir.name}: plateau [{t1:g}, {t2:g}]: "
                   f"etaR = {etaR:g} +- {etaR_err:g} (bare eta = {obs_name['eta']:g})")
 
-            ax.hlines(rate, t1, t2, color=line.get_color(), linestyle="--",
+            plateau_spans.append((t1/tau_bare, t2/tau_bare))
+            ax.hlines(rate*tau_bare, t1/tau_bare, t2/tau_bare, color=line.get_color(),
+                      linestyle="--",
                       label=r"$\eta_R = $" f"{etaR:.4g}"
                             r"$\,\pm\,$" f"{etaR_err:.2g}")
 
-    if args.plateau_window is not None:
-        ax.axvspan(*args.plateau_window, color="gray", alpha=0.1, zorder=0)
+    # One span per directory: the same window in t is a different window in
+    # t/tau_bare for every eta and k. Identical spans are drawn only once.
+    for span in dict.fromkeys(plateau_spans):
+        ax.axvspan(*span, color="gray", alpha=0.1, zorder=0)
 
-    ax.set_xlabel(r"$t$")
-    ylabel = r"$\partial_t \ln \mathrm{Re}\,\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
+    ax.set_xlabel(r"$t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
+    ylabel = r"$\tau\,\partial_t \ln \mathrm{Re}\,\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
     if len(set(nks)) == 1:
         ylabel += r",  $k=$" f"{nks[0]:.0f}" r"$\pi/N$"
     ax.set_ylabel(ylabel)
@@ -210,7 +326,10 @@ def main() -> None:
         ax.set_ylim(*args.ylim)
     if args.ylog:
         ax.set_yscale('log')
-    ax.legend()
+    # A fixed corner rather than "best": the theory labels sit inside the
+    # plot, at the axes edges, and an automatically placed legend would
+    # sooner or later be dropped on top of them.
+    ax.legend(loc="lower right")
     fig.tight_layout()
 
     if args.output is not None:
