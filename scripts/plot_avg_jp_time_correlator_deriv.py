@@ -32,6 +32,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from rfrg_coefficients import coefficients
+
 AUTO_OUTPUT = Path("<auto>")
 
 FLOAT = r"[0-9.]+(?:[eE][+-]?[0-9]+)?"
@@ -194,9 +196,7 @@ def main() -> None:
         # bare exponential decays as exp(-t/tau_bare) whatever eta and k are.
         tau_bare = 1.0/damp
 
-        coeff1 = 0.0212045
-        coeff2 = 0.0201104
-        coeff_inf = 0.0236416  # L = infinity
+        coeff1, coeff2, coeff_inf = coefficients(3)
         etaR1 = np.sqrt(eta**2 + 2.0*coeff1*args.temp*args.mass_density*lam)
         etaR2 = np.sqrt(eta**2 + 2.0*coeff2*args.temp*args.mass_density*lam)
         etaR_inf = np.sqrt(eta**2 + 2.0*coeff_inf*args.temp*args.mass_density*lam)

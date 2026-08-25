@@ -31,6 +31,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from rfrg_coefficients import coefficients
+
 AUTO_OUTPUT = Path("<auto>")
 
 FLOAT = r"[0-9.]+(?:[eE][+-]?[0-9]+)?"
@@ -180,14 +182,8 @@ def main() -> None:
         nsites = meta["nx"] * meta["ny"] * meta["nz"]
         theory =  args.temp * args.mass_density* np.exp(-damp * time_diff)
 
-        if meta["nz"] == 1:  # two-dimensional grid
-            coeff1 = 0.0522796
-            coeff2 = 0.0414326
-            coeff_inf = None
-        else:
-            coeff1 = 0.0212045
-            coeff2 = 0.0201104
-            coeff_inf = 0.0236416  # L = infinity
+        dim = 2 if meta["nz"] == 1 else 3
+        coeff1, coeff2, coeff_inf = coefficients(dim)
         etaR1 = np.sqrt(eta**2 + 2.0*coeff1*args.temp*args.mass_density*lam)
         etaR2 = np.sqrt(eta**2 + 2.0*coeff2*args.temp*args.mass_density*lam)
         if coeff_inf is not None:
