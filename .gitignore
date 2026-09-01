@@ -18,3 +18,11 @@ sim
 # Output files
 sim-*/
 obs-*/
+avg-jp-time-corr-*
+figs/
+
+# Python
+__pycache__/
+
+# macOS
+.DS_Store
