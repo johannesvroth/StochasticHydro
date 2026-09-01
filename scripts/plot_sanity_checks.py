@@ -27,6 +27,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import plot_style
+
+plot_style.use()
+
 FLOAT = r"[0-9.]+(?:[eE][+-]?[0-9]+)?"
 RUN_NAME_RE = re.compile(
     rf"sim-Nx(?P<nx>\d+)Ny(?P<ny>\d+)Nz(?P<nz>\d+)"
@@ -83,7 +87,7 @@ def main() -> None:
     ndim = sum(n > 1 for n in (nx, ny, nz))
 
     fig, ((ax_energy, ax_div), (ax_mom, ax_zero)) = plt.subplots(
-        2, 2, figsize=(11, 8))
+        2, 2, figsize=plot_style.figsize(2, nrows=2, ncols=2))
 
     time = None
 
@@ -119,7 +123,7 @@ def main() -> None:
         ax.set_xlabel("time t")
         ax.legend(fontsize="x-small", ncol=2)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)

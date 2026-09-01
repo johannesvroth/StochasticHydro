@@ -1,0 +1,72 @@
+# Matplotlib style for single-column figures in a two-column RevTeX article.
+#
+# The figure size is the RevTeX \columnwidth, so the PDF is included at
+# natural size (\includegraphics[width=\columnwidth]{...}) and the point
+# sizes below are exactly the point sizes on the printed page.  Anything
+# that rescales the figure on inclusion also rescales the text and defeats
+# this, so do not scale the figures in the LaTeX source.
+
+figure.figsize:     3.404, 2.553
+figure.dpi:         200
+savefig.dpi:        600
+savefig.format:     pdf
+savefig.transparent: False
+
+# Computer Modern, to match the RevTeX body text.  use_mathtext renders the
+# tick labels with mathtext as well, which also gives them a proper minus
+# sign (cmr10 has no U+2212).
+font.family:                serif
+font.serif:                 cmr10, Computer Modern Roman, DejaVu Serif
+mathtext.fontset:           cm
+axes.formatter.use_mathtext: True
+
+# Point sizes as they appear on the page: the article body is 10 pt, so
+# axis labels at 9 pt and tick labels at 8 pt read as slightly-reduced body
+# text rather than as fine print.
+font.size:          9
+axes.labelsize:     9
+axes.titlesize:     9
+xtick.labelsize:    8
+ytick.labelsize:    8
+legend.fontsize:    7
+figure.titlesize:   9
+
+# Thicker lines and inward ticks on all four sides, the usual APS look.
+axes.linewidth:     0.6
+lines.linewidth:    1.2
+lines.markersize:   3.5
+patch.linewidth:    0.6
+grid.linewidth:     0.5
+
+xtick.direction:    in
+ytick.direction:    in
+xtick.top:          True
+ytick.right:        True
+xtick.major.width:  0.6
+ytick.major.width:  0.6
+xtick.minor.width:  0.5
+ytick.minor.width:  0.5
+xtick.major.size:   3.0
+ytick.major.size:   3.0
+xtick.minor.size:   1.5
+ytick.minor.size:   1.5
+
+# A compact legend: at column width the entries are long, so trim the
+# padding and the sample-line length rather than the font.
+legend.frameon:       True
+legend.framealpha:    0.8
+legend.edgecolor:     0.8
+legend.fancybox:      False
+legend.borderpad:     0.3
+legend.labelspacing:  0.3
+legend.handlelength:  1.6
+legend.handletextpad: 0.5
+legend.borderaxespad: 0.4
+legend.columnspacing: 1.0
+
+errorbar.capsize:   1.5
+
+# tight_layout with almost no outer pad: the figure is already exactly one
+# column wide, so any margin left here is margin lost on the page.
+figure.autolayout:  False
+figure.constrained_layout.use: False

@@ -30,7 +30,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import plot_style
 from rfrg_coefficients import coefficients
+
+plot_style.use()
 
 AUTO_OUTPUT = Path("<auto>")
 
@@ -76,7 +79,7 @@ def legend_label(input_dir: Path, with_nk: bool = False) -> str:
     get the same legend entry."""
     m = OBS_NAME_RE.match(input_dir.name)
     label = (f"{lattice_label(int(m['nx']), int(m['ny']), int(m['nz']))}, "
-             f"dt = {m['dt']}, "
+             #f"dt = {m['dt']}, "
              rf"$\eta = {m['eta']}$, $\Lambda = {m['lam']}$")
     if with_nk:
         label += rf", $n_k = {m['nk']}$"
@@ -187,6 +190,9 @@ def main() -> None:
         nsites = meta["nx"] * meta["ny"] * meta["nz"]
         theory =  args.temp * args.mass_density* np.exp(-damp * time_diff)
 
+        # Normalize to equilibrium correlator (i.e., value at t=0)
+        C_eq = nsites*args.temp*args.mass_density
+
         coeff1, coeff2, coeff_inf = coefficients(3)
         etaR1 = np.sqrt(eta**2 + 2.0*coeff1*args.temp*args.mass_density*lam)
         etaR2 = np.sqrt(eta**2 + 2.0*coeff2*args.temp*args.mass_density*lam)
@@ -202,47 +208,33 @@ def main() -> None:
         theoryR2 = args.temp * args.mass_density * np.exp(-dampR2 * time_diff)
         theoryR_inf = args.temp * args.mass_density * np.exp(-dampR_inf * time_diff)
 
-        if single:
-            for part, values, errors in (("Re", mean.real, sem_re), ("Im", mean.imag, sem_im)):
-                line, = ax.plot(t_scaled, values/nsites, label=part)
-                ax.fill_between(t_scaled, (values - errors)/nsites, (values + errors)/nsites,
-                                 color=line.get_color(), alpha=0.3)
-            ax.plot(t_scaled, theory, "--", color="red",
-                    label=r"$\exp(-(\eta/\rho) \, \hat{\mathbf{k}}^2\, t)$")
-            ax.fill_between(t_scaled, theoryR1, theoryR2, color="black", alpha=0.3,
-                            label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$")
-            ax.plot(t_scaled, theoryR_inf, "--", color="black", alpha=0.7,
-                    label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$")
-            ax.axvline(1.0, linestyle="--", color="red", alpha=0.7,
-                       label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$")
-            ax.axvspan(min(1.0/dampR1, 1.0/dampR2)/tau_bare,
-                   max(1.0/dampR1, 1.0/dampR2)/tau_bare,
-                       color="black", alpha=0.3,
-                       label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$")
-        else:
-            first = input_dir is args.input_dirs[0]
-            label = legend_label(input_dir, with_nk=nk_varies)
-            line, = ax.plot(t_scaled, mean.real/nsites, label=label)
-            ax.fill_between(t_scaled, (mean.real - sem_re)/nsites,
-                             (mean.real + sem_re)/nsites,
-                             color=line.get_color(), alpha=0.3)
-            ax.plot(t_scaled, theory, "--", color=line.get_color(), alpha=0.7,
-                    label=r"$\exp(-(\eta/\rho) \, \hat{\mathbf{k}}^2\, t)$" if first else None)
-            ax.fill_between(t_scaled, theoryR1, theoryR2, color=line.get_color(), alpha=0.3,
-                            label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$" if first else None)
-            ax.plot(t_scaled, theoryR_inf, ":", color=line.get_color(), alpha=0.7,
-                    label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$" if first else None)
-            ax.axvline(1.0, linestyle="--", color=line.get_color(), alpha=0.7,
-                       label=r"$\rho/(\eta \hat{\mathbf{k}}^2)$" if first else None)
-            ax.axvspan(min(1.0/dampR1, 1.0/dampR2)/tau_bare,
-                   max(1.0/dampR1, 1.0/dampR2)/tau_bare,
-                       color=line.get_color(), alpha=0.3,
-                       label=r"$\rho/(\eta_R \hat{\mathbf{k}}^2)$" if first else None)
+#        if single:
+        label = legend_label(input_dir, with_nk=nk_varies)
+        line, = ax.plot(t_scaled, mean.real/C_eq, label=label)
+        ax.fill_between(t_scaled, (mean.real - sem_re)/C_eq, (mean.real +sem_re)/C_eq,
+                            color=line.get_color(), alpha=0.3)
+        # ax.fill_between(t_scaled, theoryR1, theoryR2, color="black", alpha=0.3,
+        #                 label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$")
+        # ax.plot(t_scaled, theoryR_inf, "--", color="black", alpha=0.7,
+        #         label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$")
+        # else:
+        #     first = input_dir is args.input_dirs[0]
+        #     label = legend_label(input_dir, with_nk=nk_varies)
+        #     line, = ax.plot(t_scaled, mean.real/C_eq, label=label)
+        #     ax.fill_between(t_scaled, (mean.real - sem_re)/C_eq,
+        #                      (mean.real + sem_re)/C_eq,
+        #                      color=line.get_color(), alpha=0.3)
+            # ax.fill_between(t_scaled, theoryR1, theoryR2, color=line.get_color(), alpha=0.3,
+            #                 label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$" if first else None)
+            # ax.plot(t_scaled, theoryR_inf, ":", color=line.get_color(), alpha=0.7,
+            #         label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$" if first else None)
 
     ax.set_xlabel(r"$t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
-    ylabel = r"$\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
+    #ylabel = r"$\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
     if len(set(nks)) == 1:
-        ylabel += r",  $k=$" f"{nks[0]:.0f}" r"$\pi/N$"
+        ylabel = r"$C(t,k=$" f"{nks[0]:.0f}" r"$\pi/N)/\rho T V$"
+    else:
+        ylabel = r"$C(t)/\rho T V$"
     ax.set_ylabel(ylabel)
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
@@ -255,7 +247,7 @@ def main() -> None:
     # ax.set_ylim(1e-4, 1e1)
     # ax.set_ylim(-0.2*theory[0], 1.2*theory[0])
     ax.legend()
-    fig.tight_layout()
+    fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)

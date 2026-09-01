@@ -11,6 +11,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import plot_style
+
+plot_style.use()
+
 
 def load_row_averaged(re_path: Path, im_path: Path) -> complex:
     re2 = (np.loadtxt(re_path)**2).mean(axis=0)
@@ -52,7 +56,7 @@ def main() -> None:
     ax.set_xlabel("kx")
     ax.set_ylabel("|jpx|^2 + |jpy|^2 + |jpz|^2  (ky=0, kz=0)")
     ax.set_ylim(bottom=0)
-    fig.tight_layout()
+    fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)

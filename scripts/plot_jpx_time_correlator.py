@@ -31,7 +31,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import plot_style
 from rfrg_coefficients import coefficients
+
+plot_style.use()
 
 AUTO_OUTPUT = Path("<auto>")
 
@@ -262,7 +265,7 @@ def main() -> None:
     if args.ylog:
         ax.set_yscale('log')
     ax.legend()
-    fig.tight_layout()
+    fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)
