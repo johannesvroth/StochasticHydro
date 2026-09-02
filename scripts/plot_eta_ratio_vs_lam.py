@@ -56,8 +56,6 @@ def main() -> None:
                               "and Lam are parsed from the name); each contributes one "
                               "point to the plot")
     etaR_fit.add_fit_arguments(parser)
-    parser.add_argument("--no-annotate", dest="annotate", action="store_false",
-                         help="Do not label the points with their lattice size")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
                          const=AUTO_OUTPUT,
                          help="Save the plot to this file instead of showing it; "
@@ -79,31 +77,35 @@ def main() -> None:
         args.output.parent.mkdir(exist_ok=True)
 
     results = etaR_fit.fit_dirs(args.input_dirs, args, with_ratio=True)
-    results.sort(key=lambda r: LATTICE_SPACING*r.lam)
+    # Each directory keeps the color its position on the command line gives
+    # it, so the same scan handed to plot_avg_jp_time_correlator.py comes out
+    # in the same colors and the two figures can be read side by side.
+    colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
+    colors = [colors[i % len(colors)] for i in range(len(results))]
 
-    a_lam = np.array([LATTICE_SPACING*r.lam for r in results])
-    eta = np.array([r.eta for r in results])
-    ratio = np.array([r.ratio for r in results])
-    ratio_err = np.array([r.ratio_err for r in results])
+    # The theory is a curve through the points, so it needs them ordered
+    # along the axis; the measured points themselves are drawn in the order
+    # they were given, which is the order of the legend.
+    in_order = sorted(results, key=lambda r: LATTICE_SPACING*r.lam)
+    a_lam = np.array([LATTICE_SPACING*r.lam for r in in_order])
+    eta = np.array([r.eta for r in in_order])
 
     # The theory ratio depends on eta and Lam separately, so it can only be
     # evaluated at the (eta, Lam) of the directories themselves.
     def theory(coeff):
         return np.sqrt(1.0 + 2.0*coeff*args.temp*args.mass_density
-                       * np.array([r.lam for r in results]) / eta**2)
+                       * np.array([r.lam for r in in_order]) / eta**2)
 
     fig, ax = plt.subplots()
-    line, = ax.plot(a_lam, theory(COEFF_INF), marker=".",
-                    label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$, $L=\infty$")
+    ax.plot(a_lam, theory(COEFF_INF), marker=".", color="black",
+            label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$, $L=\infty$")
     ax.fill_between(a_lam, theory(COEFF2), theory(COEFF1),
-                    color=line.get_color(), alpha=0.3,
+                    color="black", alpha=0.3,
                     label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$")
-    ax.errorbar(a_lam, ratio, yerr=ratio_err, fmt="o", capsize=3, color="black",
-                label="simulation")
-    if args.annotate:
-        for x, y, r in zip(a_lam, ratio, results):
-            ax.annotate(f"$N={r.nx}$", (x, y), textcoords="offset points",
-                        xytext=(6, 6), fontsize="small")
+    for result, color in zip(results, colors):
+        ax.errorbar(LATTICE_SPACING*result.lam, result.ratio,
+                    yerr=result.ratio_err, fmt="o", capsize=3, color=color,
+                    label=rf"$N = {result.nx}$")
     ax.set_xlabel(r"$a\Lambda$")
     ax.set_ylabel(r"$\eta_R/\eta$")
     if args.xlim is not None:
