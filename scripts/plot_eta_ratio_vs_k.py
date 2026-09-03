@@ -81,7 +81,8 @@ FLOW_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
 
 # What identifies one series: everything a directory name carries except nk.
 # Directories agreeing in all of these are points of the same curve.
-GROUP_FIELDS = ("lattice", "dt", "eta", "lam", "suffix")
+#GROUP_FIELDS = ("lattice", "dt", "eta", "lam", "suffix")
+GROUP_FIELDS = ("lattice", "eta", "lam", "suffix")
 
 
 def read_flow(flow_dir: Path):
