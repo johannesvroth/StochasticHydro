@@ -256,7 +256,10 @@ def main() -> None:
                         const=AUTO_OUTPUT,
                         help="Save the plot to this file instead of showing "
                              "it; without an argument, save to "
-                             "figs/eta-ratio-vs-k.pdf")
+                             "figs/eta-ratio-vs-k-<run parameters>.pdf, the "
+                             "parameters being those of the first input "
+                             "directory without its nk (with -cmp<n> appended "
+                             "when the directories are not one single scan)")
     parser.add_argument("--xlim", type=float, nargs=2, default=None,
                         metavar=("XMIN", "XMAX"),
                         help="x-axis limits of the plot")
@@ -270,7 +273,17 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.output is AUTO_OUTPUT:
-        args.output = Path("figs") / "eta-ratio-vs-k.pdf"
+        # The run parameters go into the file name verbatim from the first
+        # directory, minus its nk: this plot scans the modes, so the mode
+        # index is the one thing the name must not carry. A trailing "x" is
+        # kept, a --no-ideal-step scan is a different figure. Directories that
+        # differ in more than nk are several scans in one plot and would all
+        # claim the name of the first, so their number is appended.
+        stems = [OUTPUT_STEM_RE.sub(r"\1", d.name) for d in args.input_dirs]
+        stem = stems[0]
+        if len(set(stems)) > 1:
+            stem += f"-cmp{len(set(stems)) - 1}"
+        args.output = Path("figs") / f"eta-ratio-vs-k-{stem}.pdf"
         args.output.parent.mkdir(exist_ok=True)
 
     fits = fit_all(args.input_dirs, args)
