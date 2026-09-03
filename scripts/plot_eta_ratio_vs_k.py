@@ -34,14 +34,15 @@ with k, and the two part company towards the edge of the Brillouin zone; k is
 what the plot shows, because it is the momentum the rFRG flow is a function
 of.
 
-The momentum dependence the rFRG flow itself predicts is drawn on top with
---rFRG out-d3eta0.1Lam0.4: the directory holds the tabulated etaR(k) in
-etaIR.dat and names the flow's dimension, bare eta and cutoff, which is the
-only place they are recorded. Its k is divided by the cutoff of the flow, so
-a flow run at another Lam still lands where it belongs on the same
-dimensionless axis. The table spans decades in k while the lattice offers a
-handful of modes, so it is kept out of the autoscaling: the view still follows
-the measured points unless --xlim/--ylim say otherwise."""
+The momentum dependence the flow itself predicts is drawn on top with
+--rFRG out-d3eta0.1Lam0.4mode0, and the one-loop truncation of the same flow
+with --PT out-d3eta0.1Lam0.4mode2: each directory holds the tabulated etaR(k)
+in etaIR.dat and names the flow's dimension, bare eta and cutoff, which is the
+only place they are recorded. The k of a curve is divided by the cutoff of the
+flow it came from, so a flow run at another Lam still lands where it belongs
+on the same dimensionless axis. The tables span decades in k while the lattice
+offers a handful of modes, so they are kept out of the autoscaling: the view
+still follows the measured points unless --xlim/--ylim say otherwise."""
 
 import argparse
 import re
@@ -64,10 +65,18 @@ AUTO_OUTPUT = Path("<auto>")
 # the run wrote its correlator often enough.
 MIN_FIT_POINTS = 3
 
-# An rFRG flow directory is named out-d3eta0.1Lam0.4 and holds the tabulated
-# etaR(k) in etaIR.dat; the flow's parameters appear nowhere else.
-RFRG_TABLE = "etaIR.dat"
-RFRG_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
+# A flow directory is named out-d3eta0.1Lam0.4mode0, with the trailing mode
+# selecting the truncation it was run in, and holds the tabulated etaR(k) in
+# etaIR.dat; the flow's parameters appear nowhere else. Which truncation a
+# directory holds is the caller's business: --rFRG and --PT differ only in the
+# curve they draw, not in how the directory is read.
+# Turns a correlator directory name into the run parameters the output file
+# is named after: avg-jp-time-corr-Nx64Ny64Nz64dt10eta0.05Lam0.2nk3 becomes
+# Nx64Ny64Nz64dt10eta0.05Lam0.2, with the "x" of a --no-ideal-step run kept.
+OUTPUT_STEM_RE = re.compile(r"^avg-jp-time-corr-|nk\d+(x?)$")
+
+FLOW_TABLE = "etaIR.dat"
+FLOW_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
                           rf"Lam(?P<lam>{etaR_fit.FLOAT})")
 
 # What identifies one series: everything a directory name carries except nk.
@@ -75,23 +84,23 @@ RFRG_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
 GROUP_FIELDS = ("lattice", "dt", "eta", "lam", "suffix")
 
 
-def read_rfrg_flow(rfrg_dir: Path):
-    """Read the tabulated etaR(k) of an rFRG flow directory, returning
+def read_flow(flow_dir: Path):
+    """Read the tabulated etaR(k) of a flow directory, returning
     (k, etaR, params) with k sorted.
 
-    The directory is named out-d3eta0.1Lam0.4 and holds the two-column
+    The directory is named out-d3eta0.1Lam0.4mode0 and holds the two-column
     "# k etaR" file etaIR.dat. The dimension, the bare eta and the cutoff of
     the flow are taken from that name: the table itself records none of them,
     and the curve has to be divided by the eta the flow was run at, not by the
     one of any series."""
-    rfrg_dir = Path(rfrg_dir)
-    path = rfrg_dir / RFRG_TABLE
+    flow_dir = Path(flow_dir)
+    path = flow_dir / FLOW_TABLE
     if not path.exists():
-        raise SystemExit(f"No {RFRG_TABLE} in {rfrg_dir}")
-    m = RFRG_NAME_RE.search(rfrg_dir.name)
+        raise SystemExit(f"No {FLOW_TABLE} in {flow_dir}")
+    m = FLOW_NAME_RE.search(flow_dir.name)
     if m is None:
-        raise SystemExit(f"Cannot parse rFRG directory name '{rfrg_dir.name}': "
-                         "expected the form out-d3eta0.1Lam0.4")
+        raise SystemExit(f"Cannot parse flow directory name '{flow_dir.name}': "
+                         "expected the form out-d3eta0.1Lam0.4mode0")
     params = {"dim": int(m["dim"]), "eta": float(m["eta"]),
               "lam": float(m["lam"])}
     k, etaR = np.loadtxt(path, unpack=True)
@@ -99,7 +108,7 @@ def read_rfrg_flow(rfrg_dir: Path):
     return k[order], etaR[order], params
 
 
-def check_rfrg_params(params, fits, rfrg_dir: Path) -> None:
+def check_flow_params(params, fits, flow_dir: Path) -> None:
     """Report every parameter the flow was run at that no plotted series
     shares: the curve is then a different theory rather than their
     prediction, which is easy to miss once it is drawn next to the points."""
@@ -108,15 +117,28 @@ def check_rfrg_params(params, fits, rfrg_dir: Path) -> None:
                                ("Lam", params["lam"], "lam")):
         values = {getattr(fit, field) for fit in fits}
         if value not in values:
-            print(f"warning: {rfrg_dir} was run at {name} = {value:g}, the "
+            print(f"warning: {flow_dir} was run at {name} = {value:g}, the "
                   "plotted series at "
                   + ", ".join(f"{v:g}" for v in sorted(values)))
 
 
-def rfrg_x(k, params):
-    """Place the momenta of the rFRG flow on the x axis: its own k in units
-    of the cutoff the flow was run at."""
+def flow_x(k, params):
+    """Place the momenta of a flow on the x axis: its own k in units of the
+    cutoff it was run at."""
     return k/params["lam"]
+
+
+def draw_flow(ax, flow_dir: Path, fits, color: str, label: str,
+              style: str = "-") -> None:
+    """Draw one tabulated flow as etaR/eta against k/Lam, in its own color.
+
+    Both the ratio and the axis are taken relative to the parameters of the
+    flow itself rather than of any measured series, so a flow run at another
+    eta or Lam is still drawn where it belongs."""
+    k, etaR, params = read_flow(flow_dir)
+    check_flow_params(params, fits, flow_dir)
+    ax.plot(flow_x(k, params), etaR/params["eta"], style, color=color,
+            label=label)
 
 
 def group_value(fit, field):
@@ -215,11 +237,17 @@ def main() -> None:
     parser.add_argument("--rFRG", dest="rfrg", type=Path, default=None,
                         metavar="DIR",
                         help="Draw the tabulated etaR(k) of an rFRG flow on "
-                             "top: a directory named like out-d3eta0.1Lam0.4 "
-                             "holding the two-column '# k etaR' file "
-                             f"{RFRG_TABLE}. Its k is mapped onto the chosen "
-                             "x axis and it does not take part in the "
-                             "autoscaling")
+                             "top: a directory named like "
+                             "out-d3eta0.1Lam0.4mode0 holding the two-column "
+                             f"'# k etaR' file {FLOW_TABLE}. It is drawn "
+                             "against k/Lam of its own cutoff and does not "
+                             "take part in the autoscaling")
+    parser.add_argument("--PT", dest="pt", type=Path, default=None,
+                        metavar="DIR",
+                        help="The same for the one-loop truncation of the "
+                             "flow, a directory named like "
+                             "out-d3eta0.1Lam0.4mode2, drawn as one-loop "
+                             "perturbation theory")
     parser.add_argument("--no-theory", dest="theory", action="store_false",
                         help="Do not draw the rFRG expectation and the bare "
                              "eta")
@@ -322,15 +350,19 @@ def main() -> None:
     # squeeze the measured points into a corner. The view is fixed to those
     # points first and restored afterwards; an explicit --xlim/--ylim below
     # still moves it, which is how the rest of the curve is looked at.
-    if args.rfrg is not None:
+    if args.rfrg is not None or args.pt is not None:
         ax.autoscale_view()
         xlim, ylim = ax.get_xlim(), ax.get_ylim()
-        k_flow, etaR_flow, params = read_rfrg_flow(args.rfrg)
-        check_rfrg_params(params, fits, args.rfrg)
-        # Every series is divided by its own bare eta, so the flow is
-        # divided by the one it was run at.
-        ax.plot(rfrg_x(k_flow, params), etaR_flow/params["eta"], "-", color="tab:red",
-                label=r"rFRG flow $\eta_R(k)$")
+        # Perturbation theory goes down first, so the rFRG flow it is meant
+        # to be compared against is drawn over it rather than hidden beneath
+        # it; the same green and dashes the other eta-ratio plots give the
+        # one-loop expression they draw analytically.
+        if args.pt is not None:
+            draw_flow(ax, args.pt, fits, "tab:green",
+                      "1-loop perturbation theory", style="--")
+        if args.rfrg is not None:
+            draw_flow(ax, args.rfrg, fits, "tab:red",
+                      r"rFRG flow, self-consistent $k$-dep.")
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
 
