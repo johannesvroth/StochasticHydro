@@ -97,8 +97,9 @@ def main() -> None:
         args.output = Path("figs") / "eta-ratio-vs-inv-re.pdf"
         args.output.parent.mkdir(exist_ok=True)
 
-    coeff1, coeff2, coeff_inf = coefficients(3)
-
+    # coeff1, coeff2, coeff_inf = coefficients(3)
+    _, _, coeff_inf = coefficients(3)
+    
     fits = etaR_fit.fit_dirs(args.input_dirs, args, with_ratio=True)
     inv_re_data = np.array([f.inv_reynolds for f in fits])
     ratio_data = np.array([f.ratio for f in fits])
@@ -134,8 +135,8 @@ def main() -> None:
     # the point is then dropped from the plot rather than warned about.
     with np.errstate(divide="ignore"):
         inv_re2 = inv_re**2
-        curve1 = np.sqrt(1.0 + 2.0*coeff1/inv_re2)
-        curve2 = np.sqrt(1.0 + 2.0*coeff2/inv_re2)
+        # curve1 = np.sqrt(1.0 + 2.0*coeff1/inv_re2)
+        # curve2 = np.sqrt(1.0 + 2.0*coeff2/inv_re2)
         curve_inf = np.sqrt(1.0 + 2.0*coeff_inf/inv_re2)
         # One-loop perturbation theory, 1 + c_d Re^2: the small-Re expansion of
         # sqrt(1 + 2 c_d Re^2) to first order in c_d Re^2. It follows the full
@@ -147,15 +148,15 @@ def main() -> None:
     # Free theory etaR = eta, the line the curves approach for Re -> 0.
     ax.axhline(1.0, ls="--", color="black", alpha=0.7, label=r"$\eta_R = \eta$")
     ax.plot(inv_re, curve_inf, color="black",
-            label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$, $L=\infty$")
-    ax.fill_between(inv_re, curve2, curve1, color="black", alpha=0.3,
-                    label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$")
+            label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$")
+    # ax.fill_between(inv_re, curve2, curve1, color="black", alpha=0.3,
+    #                 label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$")
     ax.plot(inv_re, curve_1loop, "--", color="tab:green",
             label=r"1-loop perturbation theory ($1 + c_d\,\mathrm{Re}^2$)")
     if len(inv_re_table):
         # Straight segments between the tabulated eta, without markers.
         ax.plot(inv_re_table, ratio_table, "-", color="tab:red",
-                label=r"rFRG flow, self-consistent p-dep")
+                label=r"rFRG flow, self-consistent $k$-dep.")
     if len(fits):
         ax.errorbar(inv_re_data, ratio_data, yerr=ratio_err, fmt="o",
                     capsize=3, color="C0", label="simulation")

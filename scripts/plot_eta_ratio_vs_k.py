@@ -290,12 +290,12 @@ def main() -> None:
             if ref.etaR_inf is not None:
                 ax.axhline(ref.etaR_inf/scale, color=color, linewidth=0.8,
                            label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$, "
-                                 r"$L=\infty$" if first else None)
-            ax.axhspan(min(ref.etaR1, ref.etaR2)/scale,
-                       max(ref.etaR1, ref.etaR2)/scale,
-                       color=color, alpha=0.3,
-                       label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$"
-                             if first else None)
+                                 if first else None)
+            # ax.axhspan(min(ref.etaR1, ref.etaR2)/scale,
+            #            max(ref.etaR1, ref.etaR2)/scale,
+            #            color=color, alpha=0.3,
+            #            label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$"
+            #                  if first else None)
             ax.axhline(ref.eta/scale, color=color, ls="--", alpha=0.7,
                        linewidth=0.8,
                        label=r"bare $\eta$" if first else None)

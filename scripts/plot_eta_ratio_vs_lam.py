@@ -99,9 +99,9 @@ def main() -> None:
     fig, ax = plt.subplots()
     ax.plot(a_lam, theory(COEFF_INF), marker=".", color="black",
             label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$, $L=\infty$")
-    ax.fill_between(a_lam, theory(COEFF2), theory(COEFF1),
-                    color="black", alpha=0.3,
-                    label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$")
+    # ax.fill_between(a_lam, theory(COEFF2), theory(COEFF1),
+    #                 color="black", alpha=0.3,
+    #                 label=r"$\sqrt{1 + 2c_d \mathrm{Re}^2}$")
     for result, color in zip(results, colors):
         ax.errorbar(LATTICE_SPACING*result.lam, result.ratio,
                     yerr=result.ratio_err, fmt="o", capsize=3, color=color,
