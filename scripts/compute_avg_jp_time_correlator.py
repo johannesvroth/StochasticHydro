@@ -15,6 +15,10 @@ for --nk 7). A trailing "x" suffix on the run name (written by sim for
 --no-ideal-step runs) is kept at the very end, so such runs go to
 avg-jp-time-corr-...nk7x.
 
+Runs that were interrupted (or are still running) end in a partially written
+row; such rows are ignored, and all modes are truncated to the time steps that
+are complete in every file.
+
 For each run directory, writes a file <output-dir>/<run_name>.dat with
 columns time_diff, Re, Im (and a header recording nx, ny, nz, nk, dt),
 so that plot_jpx_time_correlator.py can read the correlators back
@@ -45,8 +49,28 @@ def parse_run_name(run_dir: Path) -> dict:
                                re.sub(r"seed\d+x?$", "", run_dir.name))}
 
 
-def load_mode(re_path: Path, im_path: Path, nkx: int, nky: int, nkz: int,
-              nx: int, ny: int, nz: int) -> np.ndarray:
+def complete_rows(path: Path, ncols: int):
+    """Yield the rows of path that contain all ncols values.
+
+    sim writes one space after every value, so a complete row contains exactly
+    ncols spaces. A run that was killed while writing (or that is still
+    running) leaves a partially written final row, which np.loadtxt would
+    reject with "invalid column index ... with N columns"; stop at the first
+    such row instead."""
+    with open(path) as f:
+        for lineno, line in enumerate(f, 1):
+            nvalues = line.count(" ")
+            if nvalues != ncols:
+                print(f"warning: {path}: row {lineno} holds {nvalues} of "
+                      f"{ncols} values, ignoring it and everything after it")
+                return
+            yield line
+
+
+def mode_index(nkx: int, nky: int, nkz: int,
+               nx: int, ny: int, nz: int) -> tuple:
+    """Column index of the mode (nkx, nky, nkz), and whether the stored value
+    has to be conjugated to obtain it."""
     nzh = nz // 2 + 1
     nkx %= nx
     nky %= ny
@@ -58,11 +82,30 @@ def load_mode(re_path: Path, im_path: Path, nkx: int, nky: int, nkz: int,
         nkx = (nx - nkx) % nx
         nky = (ny - nky) % ny
         nkz = nz - nkz
-    idx = nkx * ny * nzh + nky * nzh + nkz
-    re = np.loadtxt(re_path, usecols=idx)
-    im = np.loadtxt(im_path, usecols=idx)
-    mode = re + 1j * im
-    return np.conj(mode) if conjugate else mode
+    return nkx * ny * nzh + nky * nzh + nkz, conjugate
+
+
+def load_modes(re_path: Path, im_path: Path, modes: list,
+               nx: int, ny: int, nz: int) -> list:
+    """Load the given (nkx, nky, nkz) modes, reading each file only once.
+
+    The returned series are truncated to the rows that are complete in both the
+    real and the imaginary part file."""
+    ncols = nx * ny * (nz // 2 + 1)
+    specs = [mode_index(nkx, nky, nkz, nx, ny, nz) for nkx, nky, nkz in modes]
+    cols = sorted({idx for idx, _ in specs})
+    re_cols = np.loadtxt(complete_rows(re_path, ncols),
+                         usecols=cols).reshape(-1, len(cols))
+    im_cols = np.loadtxt(complete_rows(im_path, ncols),
+                         usecols=cols).reshape(-1, len(cols))
+    n = min(len(re_cols), len(im_cols))
+    col_of = {idx: i for i, idx in enumerate(cols)}
+
+    loaded = []
+    for idx, conjugate in specs:
+        mode = re_cols[:n, col_of[idx]] + 1j * im_cols[:n, col_of[idx]]
+        loaded.append(np.conj(mode) if conjugate else mode)
+    return loaded
 
 
 def time_correlator(jpi: np.ndarray) -> np.ndarray:
@@ -86,6 +129,8 @@ def main() -> None:
                               "the seed stripped and nk<N> appended)")
     args = parser.parse_args()
 
+    nk = args.nk
+
     for run_dir in args.run_dirs:
         params = parse_run_name(run_dir)
 
@@ -95,64 +140,40 @@ def main() -> None:
         assert nx==ny==nz, f"Expected isotropic lattice, got nx={nx}, ny={ny}, nz={nz}"
 
         output_dir = (args.output_dir if args.output_dir is not None
-                      else Path(f"{params['out_base']}nk{args.nk}{params['suffix']}"))
+                      else Path(f"{params['out_base']}nk{nk}{params['suffix']}"))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         header = (f"nx={nx} ny={ny} nz={nz} "
-                  f"nk={args.nk} dt={params['dt']}\n"
+                  f"nk={nk} dt={params['dt']}\n"
                   "time_diff Re Im")
 
-        jpx_y1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, args.nk, 0, nx, ny, nz)
-        jpx_y2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                        0, params["ny"] - args.nk, 0, nx, ny, nz)
-        
-        jpx_z1 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                         0, 0, args.nk, nx, ny, nz)
-        jpx_z2 = load_mode(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
-                        0, 0, params["nz"] - args.nk, nx, ny, nz)
-        
-        jpy_x1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         args.nk, 0, 0, nx, ny, nz)
-        jpy_x2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                        params["nx"] - args.nk, 0, 0, nx, ny, nz)
-        
-        jpy_z1 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                         0, 0, args.nk, nx, ny, nz)
-        jpy_z2 = load_mode(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
-                        0, 0, params["nz"] - args.nk, nx, ny, nz)
+        # For each component, the two transverse directions and both signs of k.
+        jpx_modes = load_modes(run_dir / "jpx_re.dat", run_dir / "jpx_im.dat",
+                               [(0, nk, 0), (0, -nk, 0),
+                                (0, 0, nk), (0, 0, -nk)], nx, ny, nz)
+        jpy_modes = load_modes(run_dir / "jpy_re.dat", run_dir / "jpy_im.dat",
+                               [(nk, 0, 0), (-nk, 0, 0),
+                                (0, 0, nk), (0, 0, -nk)], nx, ny, nz)
+        jpz_modes = load_modes(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
+                               [(nk, 0, 0), (-nk, 0, 0),
+                                (0, nk, 0), (0, -nk, 0)], nx, ny, nz)
 
-        jpz_x1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                            args.nk, 0, 0, nx, ny, nz)
-        jpz_x2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                           params["nx"] - args.nk, 0, 0, nx, ny, nz)
-        
-        jpz_y1 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                         0, args.nk, 0, nx, ny, nz)
-        jpz_y2 = load_mode(run_dir / "jpz_re.dat", run_dir / "jpz_im.dat",
-                        0, params["ny"] - args.nk, 0, nx, ny, nz)
-        
-        corr_jpx_y1 = time_correlator(jpx_y1)
-        corr_jpx_y2 = time_correlator(jpx_y2)
-        corr_jpx_z1 = time_correlator(jpx_z1)
-        corr_jpx_z2 = time_correlator(jpx_z2)
+        modes = jpx_modes + jpy_modes + jpz_modes
 
-        corr_jpy_x1 = time_correlator(jpy_x1)
-        corr_jpy_x2 = time_correlator(jpy_x2)
-        corr_jpy_z1 = time_correlator(jpy_z1)
-        corr_jpy_z2 = time_correlator(jpy_z2)
+        # jpx, jpy and jpz are written one after the other, so an interrupted
+        # run can leave one file a time step shorter than the others.
+        n_steps = min(len(mode) for mode in modes)
+        if n_steps == 0:
+            raise SystemExit(f"{run_dir}: no complete time steps found")
+        if n_steps != max(len(mode) for mode in modes):
+            print(f"{run_dir}: files differ in length, using the first "
+                  f"{n_steps} time steps")
+        modes = [mode[:n_steps] for mode in modes]
 
-        corr_jpz_x1 = time_correlator(jpz_x1)
-        corr_jpz_x2 = time_correlator(jpz_x2)
-        corr_jpz_y1 = time_correlator(jpz_y1)
-        corr_jpz_y2 = time_correlator(jpz_y2)
+        # Average the correlator over all twelve transverse modes
+        correlator = sum(time_correlator(mode) for mode in modes) / len(modes)
 
-        # Sum all of them and divide by twelve to get the average correlator
-        correlator = (corr_jpx_y1 + corr_jpx_y2 + corr_jpx_z1 + corr_jpx_z2 +
-                     corr_jpy_x1 + corr_jpy_x2 + corr_jpy_z1 + corr_jpy_z2 +
-                     corr_jpz_x1 + corr_jpz_x2 + corr_jpz_y1 + corr_jpz_y2) / 12.0
-
-        time_diff = np.arange(len(corr_jpx_y1)) * params["dt"]
+        time_diff = np.arange(n_steps) * params["dt"]
 
         out_path = output_dir / f"{run_dir.name}.dat"
         np.savetxt(out_path,
