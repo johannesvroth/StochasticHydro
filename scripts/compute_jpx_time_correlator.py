@@ -46,9 +46,28 @@ def parse_run_name(run_dir: Path) -> dict:
                                    re.sub(r"seed\d+(x?)$", r"\1", run_dir.name)))}
 
 
+def complete_rows(path: Path, ncols: int):
+    """Yield the rows of path that contain all ncols values.
+
+    sim writes one space after every value, so a complete row contains exactly
+    ncols spaces. A run that was killed while writing (or that is still
+    running) leaves a partially written final row, which np.loadtxt would
+    reject with "invalid column index ... with N columns"; stop at the first
+    such row instead."""
+    with open(path) as f:
+        for lineno, line in enumerate(f, 1):
+            nvalues = line.count(" ")
+            if nvalues != ncols:
+                print(f"warning: {path}: row {lineno} holds {nvalues} of "
+                      f"{ncols} values, ignoring it and everything after it")
+                return
+            yield line
+
+
 def load_mode(re_path: Path, im_path: Path, nkx: int, nky: int, nkz: int,
               nx: int, ny: int, nz: int) -> np.ndarray:
     nzh = nz // 2 + 1
+    ncols = nx * ny * nzh
     nkx %= nx
     nky %= ny
     nkz %= nz
@@ -60,9 +79,11 @@ def load_mode(re_path: Path, im_path: Path, nkx: int, nky: int, nkz: int,
         nky = (ny - nky) % ny
         nkz = nz - nkz
     idx = nkx * ny * nzh + nky * nzh + nkz
-    re = np.loadtxt(re_path, usecols=idx)
-    im = np.loadtxt(im_path, usecols=idx)
-    mode = re + 1j * im
+    re = np.loadtxt(complete_rows(re_path, ncols), usecols=idx)
+    im = np.loadtxt(complete_rows(im_path, ncols), usecols=idx)
+    # An interrupted run can leave the two files one time step apart.
+    n = min(len(re), len(im))
+    mode = re[:n] + 1j * im[:n]
     return np.conj(mode) if conjugate else mode
 
 
