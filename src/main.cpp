@@ -568,19 +568,24 @@ int main(int argc, const char *argv[])
 
     // Thermalization
 
-    auto k_min = 2*M_PI/static_cast<real_t>(max({Nx, Ny, Nz}));
-    auto eq_time_slow = 1/(eta_k2_dep(k_min*k_min)*k_min*k_min/mass_density);
+    auto khat2 = [](int n, int N) {
+        double s = 2*sin(M_PI*n/static_cast<real_t>(N));
+        return s*s;
+    };
+
+    auto k_hat_min2 = khat2(1, max({Nx, Ny, Nz}));
+    auto eq_time_slow = 1/(eta_k2_dep(k_hat_min2)*k_hat_min2/mass_density);
 
     auto therm_time = 5.0*eq_time_slow;
 
-    const double therm_dt = therm_time/1000.0;
+    const auto therm_dt = therm_time/1000.0;
 
     const int therm_steps = static_cast<int>(floor(therm_time/therm_dt));
 
-    auto k_max=M_PI;
-    auto eq_time_fast = 1/(eta_k2_dep(k_max*k_max)*k_max*k_max/mass_density);
+    auto k_hat_max2=khat2(Nx/2, Nx) + khat2(Ny/2, Ny) + khat2(Nz/2, Nz);
+    auto eq_time_fast = 1/(eta_k2_dep(k_hat_max2)*k_hat_max2/mass_density);
 
-    cout << "Relaxation time of slowest mode= " << eq_time_slow << " (k_min=" << k_min << ")" << endl;
+    cout << "Relaxation time of slowest mode= " << eq_time_slow << endl;
     cout << "  Numerical thermalization time= " << therm_time << endl;
     cout << "                Simulation time= " << sim_time << endl;
     cout << "Relaxation time of fastest mode= " << eq_time_fast << endl;
