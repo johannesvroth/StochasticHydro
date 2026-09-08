@@ -15,11 +15,14 @@ compute_jpx_time_correlator.py, e.g. avg-jp-time-corr-Nx8Ny8Nz8dt0.1eta0.1Lam1.2
 an optional trailing "x" for --no-ideal-step runs); the shear viscosity eta
 is parsed from that name. With several directories, the log-derivatives of
 all of them are drawn into the same plot. For each directory the fit window
-etaR_fit.py measures etaR over, [tau, 2 tau] with tau = 1/dampR_inf the
-theory autocorrelation time, is marked by two vertical lines; the same window
-in t lands at a different place on the scaled axis for every eta and k, so
-each directory gets its own pair. With --show-fit the fit itself is run over
-that window and its result drawn as a horizontal line.
+etaR_fit.py measures etaR over, [tau, 2 tau] with tau solved for from the data
+by the self-consistency condition tau = 1/dampR(tau), is marked by two
+vertical lines; the same window in t lands at a different place on the scaled
+axis for every eta and k, so each directory gets its own pair. With
+--show-fit the result of that fit is drawn as a horizontal line as well.
+A directory whose correlator is sampled too coarsely, or run too briefly, for
+the condition to have a solution is still plotted: it loses its window and its
+fit, with a warning, not the figure.
 
 The t axis is scaled by the bare correlation time of the mode,
 tau = rho/(eta (1+eta_reg_uv) k_hat^2), so that the bare exponential decay
@@ -36,7 +39,6 @@ import numpy as np
 
 import plot_style
 import etaR_fit
-from rfrg_coefficients import coefficients
 
 plot_style.use()
 
@@ -72,15 +74,29 @@ def lattice_label(nx: int, ny: int, nz: int) -> str:
     return rf"${nx} \times {ny} \times {nz}$"
 
 
+def label_hline(axis, y, text, color, x=0.01, below=False):
+    """Label a horizontal line next to the line itself instead of in the
+    legend: at the left edge of the axes, just above (or below) the line.
+    x is a fraction of the axes width, y a data coordinate."""
+    axis.annotate(text, xy=(x, y), xycoords=axis.get_yaxis_transform(),
+                  xytext=(0, -3 if below else 3), textcoords="offset points",
+                  ha="left" if x < 0.5 else "right",
+                  va="top" if below else "bottom",
+                  color=color, fontsize="small", zorder=6)
+
+
 def label_vline(axis, x, text, color, y=0.02, on_left=True):
     """Label a vertical theory line next to the line itself instead of in the
     legend: rotated along the line, near the bottom of the axes, on its
     right (on_left) or on its left. x is a data coordinate, y a fraction
     of the axes height."""
+    # Above the legend (zorder 5): these labels sit at the bottom of the
+    # axes, where the legend often lands, and a hidden label is worse than
+    # one that crosses the legend box.
     axis.annotate(text, xy=(x, y), xycoords=axis.get_xaxis_transform(),
                   xytext=(5, 0) if on_left else (-5, 0), textcoords="offset points", rotation=90,
                   ha="left" if on_left else "right", va="bottom",
-                  color=color, fontsize="small")
+                  color=color, fontsize="small", zorder=6)
 
 
 def legend_label(input_dir: Path, with_nk: bool = False) -> str:
@@ -161,7 +177,6 @@ def main() -> None:
         args.output = Path("figs") / f"{stem}.pdf"
         args.output.parent.mkdir(exist_ok=True)
 
-    single = len(args.input_dirs) == 1
     # The mode index goes into the legend only when the y label
     # cannot carry it, i.e. when the directories do not share one.
     nk_varies = len({parse_obs_name(d)['nk']
@@ -196,10 +211,6 @@ def main() -> None:
         # bare exponential decays as exp(-t/tau_bare) whatever eta and k are.
         tau_bare = 1.0/damp
 
-        coeff_inf = coefficients(3)[2]
-        etaR_inf = np.sqrt(eta**2 + 2.0*coeff_inf*args.temp*args.mass_density*lam)
-        dampR_inf = etaR_inf * damp_per_eta
-
         # Per-run log-derivative f'/f, then mean and SEM across runs. Only valid
         # at small t: once a run's f(t) decays into the noise and crosses zero,
         # its f'/f blows up and mean and SEM become meaningless.
@@ -231,37 +242,103 @@ def main() -> None:
         ax.fill_between(t_scaled, (mean - sem)*tau_bare, (mean + sem)*tau_bare,
                          color=line.get_color(), alpha=0.3)
 
-        first = input_dir is args.input_dirs[0]
         # The window etaR_fit.py fits etaR over, [TMIN_FACTOR, TMAX_FACTOR]
-        # tau with tau = 1/dampR_inf the theory autocorrelation time, as two
-        # vertical lines. Gray, like the window in
+        # tau, as two vertical lines. Gray, like the window in
         # plot_avg_jp_time_correlator_deriv_fit.py and for the same reason:
         # the windows of different directories nearly coincide and would
         # otherwise blend into a color belonging to none of them.
         window_color = "gray"
-        # tau/tau_bare is where the theory autocorrelation time falls on the
-        # scaled axis, so the window bounds are its multiples.
-        tau_scaled = 1.0/(dampR_inf*tau_bare)
-        for factor in (etaR_fit.TMIN_FACTOR, etaR_fit.TMAX_FACTOR):
-            ax.axvline(factor*tau_scaled, linestyle=":", color=window_color,
-                       alpha=0.7)
-        # Only the first directory labels the window: one label is enough,
-        # and several would sit on top of each other.
-        if single or first:
-            label_vline(ax, etaR_fit.TMAX_FACTOR*tau_scaled, "fit window",
+        # The window scale tau follows from the self-consistency condition
+        # tau = 1/dampR(tau) and so from the fit itself, not from theory:
+        # the fit is run for every directory, whether or not --show-fit
+        # draws its result, and the window it used is what is marked here.
+        # This is a plotting script, though, and the data is worth looking at
+        # even where the condition has no solution -- a mode sampled too
+        # coarsely in time to resolve its own decay, say, which is exactly
+        # what one wants to see in the plot -- so a failure costs this
+        # directory its window and its fit, not the whole figure.
+        try:
+            fit = etaR_fit.fit_etaR(input_dir, mass_density=args.mass_density,
+                                    temp=args.temp)
+        except SystemExit as exc:
+            print(f"no fit window for {input_dir.name}: {exc}")
+            fit = None
+        if fit is not None:
+            for bound in (fit.fit_tmin, fit.fit_tmax):
+                ax.axvline(bound/tau_bare, linestyle=":", color=window_color,
+                           alpha=0.7)
+            # The lower bound is the correlation time the fit itself yields,
+            # tau_R = 1/dampR, since that is what the self-consistency
+            # condition tau = 1/dampR(tau) fixes; on the axis, scaled by the
+            # bare correlation time, it sits at tau_R/tau. Labelling it makes
+            # the condition readable off the plot: the window starts where
+            # the fitted rate below says it should.
+            # Both labels on the left of their line, a whole tau_R/tau
+            # apart, which keeps them off each other and off the legend the
+            # upper bound would otherwise run into.
+            label_vline(ax, fit.fit_tmin/tau_bare, r"$\tau_R/\tau$",
                         window_color, on_left=False)
+            # label_vline(ax, fit.fit_tmax/tau_bare, r"$2\tau_R/\tau$",
+            #             window_color, on_left=False)
+            # The second pass, the same window half a tau later, whose
+            # difference from the first is the systematic. It solves the same
+            # condition over its own window, so it has a correlation time
+            # tau_R' of its own and its window is [1.5, 2.5] tau_R'. Dash-dot
+            # against the dotted first window: the two pairs interleave and
+            # must be told apart at a glance.
+            if fit.etaR_alt is not None:
+                for bound in (fit.fit_tmin_alt, fit.fit_tmax_alt):
+                    ax.axvline(bound/tau_bare, linestyle="-.",
+                               color=window_color, alpha=0.5)
+                label_vline(ax, fit.fit_tmin_alt/tau_bare,
+                            r"$1.5\tau_R'/\tau$", window_color,
+                            on_left=False)
+                # label_vline(ax, fit.fit_tmax_alt/tau_bare,
+                #             r"$2.5\tau_R'/\tau$", window_color,
+                #             on_left=False)
 
-        if args.show_fit:
+        if args.show_fit and fit is not None:
             # The standard fit, over exactly the window marked above; the
             # rate is scaled by the same tau_bare as the data, so the line
             # sits at -etaR/eta whatever eta and k are.
-            fit = etaR_fit.fit_etaR(input_dir, mass_density=args.mass_density,
-                                    temp=args.temp)
             print(fit.summary())
+            # Only the statistical error is quoted. The systematic is the
+            # difference between this fit and the second one, and both are
+            # drawn: it is the gap between the two horizontal lines, which
+            # says more in the plot than a number in the legend. It is still
+            # printed by fit.summary() above.
+            fit_label = (r"$\eta_R = $" f"{fit.etaR:.4g}"
+                         r"$\,\pm\,$" f"{fit.stat:.2g}" r"$_{\mathrm{stat}}$")
             ax.axhline(-fit.dampR*tau_bare, linestyle="--",
-                       color=line.get_color(),
-                       label=r"$\eta_R = $" f"{fit.etaR:.4g}"
-                             r"$\,\pm\,$" f"{fit.err:.2g}")
+                       color=line.get_color(), label=fit_label)
+            # The second fit, drawn like its window: the gap between the two
+            # horizontal lines is the systematic the legend quotes.
+            if fit.etaR_alt is not None:
+                dampR_alt = fit.etaR_alt*damp_per_eta
+                ax.axhline(-dampR_alt*tau_bare, linestyle="-.",
+                           color=line.get_color(), alpha=0.6,
+                           label=r"$\eta_R' = $" f"{fit.etaR_alt:.4g}"
+                                 r"$\,\pm\,$" f"{fit.stat_alt:.2g}"
+                                 r"$_{\mathrm{stat}}$")
+            # The fitted rate is -1/tau_R with the same tau_R the window
+            # starts at, which is the whole content of the self-consistency
+            # condition; scaled by the bare correlation time like the axis
+            # it is -tau/tau_R, the reciprocal of where the window begins.
+            # The two rates differ by the systematic, so their lines can be a
+            # hair apart: each label goes on the outward side of its own line,
+            # the upper one above and the lower one below, so that they never
+            # end up between the lines or on top of each other. With no
+            # second pass the single label goes below, where the data at the
+            # left edge is still above the line, coming down out of the
+            # transient.
+            if fit.etaR_alt is None:
+                first_below = True
+            else:
+                first_below = fit.dampR > dampR_alt
+                label_hline(ax, -dampR_alt*tau_bare, r"$-\tau/\tau_R'$",
+                            line.get_color(), below=not first_below)
+            label_hline(ax, -fit.dampR*tau_bare, r"$-\tau/\tau_R$",
+                        line.get_color(), below=first_below)
 
         if args.plateau_window is not None:
             t1, t2 = args.plateau_window
@@ -284,10 +361,14 @@ def main() -> None:
                   f"etaR = {etaR:g} +- {etaR_err:g} (bare eta = {obs_name['eta']:g})")
 
             plateau_spans.append((t1/tau_bare, t2/tau_bare))
+            # The window is hand-picked here, so there is no second pass to
+            # compare against and no systematic: the error is statistical
+            # only, and is labelled as such to match the fit legend above.
             ax.hlines(rate*tau_bare, t1/tau_bare, t2/tau_bare, color=line.get_color(),
                       linestyle="--",
                       label=r"$\eta_R = $" f"{etaR:.4g}"
-                            r"$\,\pm\,$" f"{etaR_err:.2g}")
+                            r"$\,\pm\,$" f"{etaR_err:.2g}"
+                            r"$_{\mathrm{stat}}$")
 
     # One span per directory: the same window in t is a different window in
     # t/tau_bare for every eta and k. Identical spans are drawn only once.

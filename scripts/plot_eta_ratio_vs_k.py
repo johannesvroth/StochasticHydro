@@ -206,7 +206,8 @@ def fit_all(input_dirs, args):
         try:
             fit = etaR_fit.fit_etaR(input_dir, mass_density=args.mass_density,
                                     temp=args.temp, fit_tmin=args.fit_tmin,
-                                    fit_tmax=args.fit_tmax)
+                                    fit_tmax=args.fit_tmax,
+                                    use_theory_tau=args.tau_theory)
         except SystemExit as exc:
             print(f"skipping {Path(input_dir).name}: {exc}")
             continue
