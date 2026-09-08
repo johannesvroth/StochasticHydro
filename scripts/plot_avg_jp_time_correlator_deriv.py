@@ -294,12 +294,12 @@ def main() -> None:
     for span in dict.fromkeys(plateau_spans):
         ax.axvspan(*span, color="gray", alpha=0.1, zorder=0)
 
-    ax.set_xlabel(r"$t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
+    ax.set_xlabel(r"$\Delta t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
     #ylabel = r"$\tau\,\partial_t \ln \mathrm{Re}\,\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
     if len(set(nks)) == 1:
-        ylabel = r"$\tau\,\partial_t \ln C(t,k=$" f"{nks[0]:.0f}" r"$\pi/N)$"
+        ylabel = r"$\tau\,\partial \ln C(\Delta t,k=$" f"{nks[0]:.0f}" r"$\pi/N)/\partial \Delta t$"
     else:
-        ylabel = r"$\tau\,\partial_t \ln C(t)$"
+        ylabel = r"$\tau\,\partial \ln C(\Delta t)/\partial \Delta t$"
     ax.set_ylabel(ylabel)
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)

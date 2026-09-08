@@ -229,12 +229,12 @@ def main() -> None:
             # ax.plot(t_scaled, theoryR_inf, ":", color=line.get_color(), alpha=0.7,
             #         label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$" if first else None)
 
-    ax.set_xlabel(r"$t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
+    ax.set_xlabel(r"$\Delta t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
     #ylabel = r"$\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
     if len(set(nks)) == 1:
-        ylabel = r"$C(t,k=$" f"{nks[0]:.0f}" r"$\pi/N)/\rho T V$"
+        ylabel = r"$C(\Delta t,k=$" f"{nks[0]:.0f}" r"$\pi/N)/\rho T V$"
     else:
-        ylabel = r"$C(t)/\rho T V$"
+        ylabel = r"$C(\Delta t)/\rho T V$"
     ax.set_ylabel(ylabel)
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
