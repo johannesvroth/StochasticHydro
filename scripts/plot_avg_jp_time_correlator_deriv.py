@@ -214,17 +214,42 @@ def main() -> None:
         # Per-run log-derivative f'/f, then mean and SEM across runs. Only valid
         # at small t: once a run's f(t) decays into the noise and crosses zero,
         # its f'/f blows up and mean and SEM become meaningless.
+        correlators = []
         log_derivatives = []
         time_diff = None
         for path in paths:
             t, re_part, im_part = np.loadtxt(path, unpack=True)
             if time_diff is None:
                 time_diff = t
+            correlators.append(re_part)
             log_derivatives.append(np.gradient(re_part, t) / re_part)
 
         n_min = min(len(d) for d in log_derivatives)
         log_derivatives = np.stack([d[:n_min] for d in log_derivatives])
+        correlators = np.stack([c[:n_min] for c in correlators])
         time_diff = time_diff[:n_min]
+
+        # The curve stops at the first zero-crossing of the correlator, where
+        # f'/f has a pole: only the contiguous stretch at the start over which
+        # every run is still positive is kept, the same criterion etaR_fit.py
+        # applies to its fit window. Beyond that crossing the run has decayed
+        # into the noise, and its log-derivative diverges and then wanders
+        # about, dragging mean and SEM with it whether the points that follow
+        # happen to be positive or not.
+        positive = np.all(correlators > 0, axis=0)
+        crossings = np.flatnonzero(~positive)
+        if crossings.size:
+            n_keep = crossings[0]
+            if n_keep == 0:
+                raise SystemExit(f"{input_dir.name}: the correlator is "
+                                 "non-positive at the first time difference; "
+                                 "nothing to plot")
+            print(f"{input_dir.name}: correlator crosses zero at "
+                  f"t = {time_diff[n_keep]:g}, plotting up to "
+                  f"t = {time_diff[n_keep - 1]:g}")
+            log_derivatives = log_derivatives[:, :n_keep]
+            time_diff = time_diff[:n_keep]
+            n_min = n_keep
         t_scaled = time_diff/tau_bare
 
         mean = log_derivatives.mean(axis=0)
