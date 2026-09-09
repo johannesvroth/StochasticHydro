@@ -17,6 +17,12 @@ Since the ratio grows without bound towards small 1/Re, while the points of
 interest sit at 1 for large 1/Re, the plot normally wants --xlog --ylog; on
 linear axes the divergence at the left edge flattens everything else.
 
+Below the plot sits a small panel with the relative deviation of the measured
+points from the rFRG, (etaR - etaR^rFRG)/etaR^rFRG, carrying the same error bar
+divided by the same reference. Which rFRG that is follows what is drawn above:
+the tabulated flow of --etaR-table when it is given, interpolated at the 1/Re
+of each point, and otherwise the analytic sqrt(1 + 2 c_d Re^2).
+
 The measured points are fitted from the correlator directories given on the
 command line, one point per directory, by the standard procedure in
 etaR_fit.py; eta and Lam come from each directory name, so 1/Re = eta/sqrt(rho
@@ -50,6 +56,26 @@ AUTO_OUTPUT = Path("<auto>")
 DEFAULT_INV_RE_MIN = 0.01
 
 
+def reference_ratio(inv_re, coeff_inf, inv_re_table, ratio_table):
+    """The rFRG etaR/eta the deviation panel measures the points against, as
+    an array over the 1/Re of the points.
+
+    With a tabulated flow it is that flow at the 1/Re of each point, nan where
+    a point lies outside the tabulated range; with none it is the analytic
+    sqrt(1 + 2 c_d Re^2) drawn above. The table is read in the log of both
+    axes, which is also how such a curve is looked at."""
+    inv_re = np.asarray(inv_re, dtype=float)
+    if len(inv_re_table):
+        good = (inv_re_table > 0.0) & (ratio_table > 0.0)
+        xs, ratio = inv_re_table[good], ratio_table[good]
+        out = np.full(inv_re.shape, np.nan)
+        inside = (inv_re > 0.0) & (inv_re >= xs[0]) & (inv_re <= xs[-1])
+        out[inside] = np.exp(np.interp(np.log(inv_re[inside]), np.log(xs),
+                                       np.log(ratio)))
+        return out
+    return np.sqrt(1.0 + 2.0*coeff_inf/inv_re**2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -77,6 +103,10 @@ def main() -> None:
                               "fixing the parameters it was made with, e.g. "
                               "etaR-d3g1rho1T1Lam0.4.dat; without this option "
                               "no such curve is drawn")
+    parser.add_argument("--no-ratio", dest="ratio_panel",
+                         action="store_false",
+                         help="Do not draw the simulation/rFRG deviation "
+                              "panel below the plot")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
                          const=AUTO_OUTPUT,
                          help="Save the plot to this file instead of showing it; "
@@ -87,6 +117,11 @@ def main() -> None:
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                          metavar=("YMIN", "YMAX"),
                          help="y-axis limits of the plot")
+    parser.add_argument("--rlim", type=float, nargs=2, default=None,
+                         metavar=("RMIN", "RMAX"),
+                         help="y-axis limits of the deviation panel; without "
+                              "it the panel is centred on zero and follows "
+                              "its own points")
     parser.add_argument("--xlog", action="store_true",
                          help="Use a logarithmic x-axis")
     parser.add_argument("--ylog", action="store_true",
@@ -144,10 +179,20 @@ def main() -> None:
         # c_d Re^2 is of order one, growing as Re^2 instead of Re.
         curve_1loop = 1.0 + coeff_inf/inv_re2
 
-    fig, ax = plt.subplots()
+    # The deviation panel shares the x axis of the plot proper, so the two are
+    # read as one figure: the panel is only ever looked at at the 1/Re of a
+    # point above it. Without points there is nothing to draw in it.
+    if args.ratio_panel and len(fits):
+        fig, ax, rax = plot_style.deviation_panel()
+    else:
+        fig, ax = plt.subplots()
+        rax = None
+
     # Free theory etaR = eta, the line the curves approach for Re -> 0.
     ax.axhline(1.0, ls="--", color="black", alpha=0.7, label=r"$\eta_R = \eta$")
-    ax.plot(inv_re, curve_inf, color="black",
+    # The same red as the tabulated flow below, dashed: the two are the same
+    # theory, once without and once with the self-consistent k dependence.
+    ax.plot(inv_re, curve_inf, "--", color="tab:red",
             label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$")
     # ax.fill_between(inv_re, curve2, curve1, color="black", alpha=0.3,
     #                 label=r"rFRG $\sqrt{1 + 2c_d\mathrm{Re}^2}$")
@@ -160,7 +205,28 @@ def main() -> None:
     if len(fits):
         ax.errorbar(inv_re_data, ratio_data, yerr=ratio_err, fmt="o",
                     capsize=3, color="C0", label="simulation")
-    ax.set_xlabel(r"$1/\mathrm{Re}$")
+    if rax is not None:
+        # Both the point and its error bar are divided by the same reference,
+        # so the panel is the plot above rescaled point by point: the
+        # deviation is in units of the rFRG at that 1/Re.
+        ref = reference_ratio(inv_re_data, coeff_inf, inv_re_table,
+                              ratio_table)
+        rax.errorbar(inv_re_data, ratio_data/ref - 1.0, yerr=ratio_err/ref,
+                     fmt="o", capsize=3, color="C0")
+        missing = np.isnan(ref)
+        if missing.any():
+            print("warning: no deviation drawn at 1/Re = "
+                  + ", ".join(f"{v:g}" for v in inv_re_data[missing])
+                  + f"; {args.etaR_table} tabulates no etaR there")
+        rax.axhline(0.0, color="black", linewidth=0.6)
+        rax.set_xlabel(r"$1/\mathrm{Re}$")
+        rax.set_ylabel(r"$\eta_R/\eta_R^{\mathrm{rFRG}} - 1$", fontsize=7)
+        # Few ticks: the panel is a fifth of the height of the plot above and
+        # its labels would otherwise run into each other. (Only --rlim gets
+        # this far; the centred limits below place their own two ticks.)
+        rax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3))
+    else:
+        ax.set_xlabel(r"$1/\mathrm{Re}$")
     ax.set_ylabel(r"$\eta_R/\eta$")
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
@@ -170,8 +236,20 @@ def main() -> None:
         ax.set_ylim(*args.ylim)
     if args.ylog:
         ax.set_yscale('log')
+    if rax is not None:
+        if args.rlim is not None:
+            rax.set_ylim(*args.rlim)
+        else:
+            plot_style.center_panel(rax)
     ax.legend()
     fig.tight_layout(pad=0.2)
+    if rax is not None:
+        # tight_layout picks its own gap between the two panels; theirs is
+        # the one of the style file, which is the same in every such figure.
+        # The ticks are tidied last, once both axes have the size they will be
+        # drawn at: how many ticks the default locator offers depends on it.
+        fig.subplots_adjust(hspace=plot_style.PANEL_HSPACE)
+        plot_style.tidy_panel_ticks(ax, rax)
 
     if args.output is not None:
         fig.savefig(args.output)

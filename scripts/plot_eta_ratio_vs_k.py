@@ -34,6 +34,13 @@ with k, and the two part company towards the edge of the Brillouin zone; k is
 what the plot shows, because it is the momentum the rFRG flow is a function
 of.
 
+Below the plot sits a small panel with the relative deviation of the
+measured points from the rFRG, (etaR - etaR^rFRG)/etaR^rFRG, carrying the same
+error bar divided by the same reference. Which rFRG that is follows what is
+drawn above: the tabulated flow of --rFRG when it is given, interpolated at
+the k of each point, and otherwise the momentum-independent expectation
+sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) of the point's own series.
+
 The momentum dependence the flow itself predicts is drawn on top with
 --rFRG out-d3eta0.1Lam0.4mode0, and the one-loop truncation of the same flow
 with --PT out-d3eta0.1Lam0.4mode2: each directory holds the tabulated etaR(k)
@@ -140,6 +147,43 @@ def draw_flow(ax, flow_dir: Path, fits, color: str, label: str,
     check_flow_params(params, fits, flow_dir)
     ax.plot(flow_x(k, params), etaR/params["eta"], style, color=color,
             label=label)
+
+
+def flow_ratio_at(flow_dir: Path, x):
+    """etaR/eta of a tabulated flow at the plot's x = k/Lam, as an array with
+    nan wherever x lies outside the tabulated range.
+
+    The comparison is made between the two ratios rather than between the two
+    viscosities, so that a flow run at another bare eta is compared the way it
+    is drawn. The table spans decades in k and is read in the log of both, the
+    spacing it is written with being geometric."""
+    k, etaR, params = read_flow(flow_dir)
+    xs = flow_x(k, params)
+    ratio = etaR/params["eta"]
+    good = (xs > 0.0) & (ratio > 0.0)
+    xs, ratio = xs[good], ratio[good]
+    x = np.asarray(x, dtype=float)
+    out = np.full(x.shape, np.nan)
+    inside = (x > 0.0) & (x >= xs[0]) & (x <= xs[-1])
+    out[inside] = np.exp(np.interp(np.log(x[inside]), np.log(xs),
+                                   np.log(ratio)))
+    return out
+
+
+def reference_ratio(members, x, flow_dir):
+    """The rFRG etaR/eta the deviation panel measures the points against.
+
+    With a tabulated flow it is that flow at the momentum of each point; with
+    none it is the momentum-independent sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) of
+    the series itself, the horizontal line the points are drawn against above
+    (in 2D, where no L=infinity coefficient exists, the middle of the
+    finite-volume band)."""
+    if flow_dir is not None:
+        return flow_ratio_at(flow_dir, x)
+    ref = members[0]
+    etaR = ref.etaR_inf if ref.etaR_inf is not None \
+        else 0.5*(ref.etaR1 + ref.etaR2)
+    return np.full(np.shape(x), etaR/ref.eta)
 
 
 def group_value(fit, field):
@@ -253,6 +297,10 @@ def main() -> None:
     parser.add_argument("--no-theory", dest="theory", action="store_false",
                         help="Do not draw the rFRG expectation and the bare "
                              "eta")
+    parser.add_argument("--no-ratio", dest="ratio_panel",
+                        action="store_false",
+                        help="Do not draw the simulation/rFRG deviation panel "
+                             "below the plot")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
                         const=AUTO_OUTPUT,
                         help="Save the plot to this file instead of showing "
@@ -267,6 +315,11 @@ def main() -> None:
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                         metavar=("YMIN", "YMAX"),
                         help="y-axis limits of the plot")
+    parser.add_argument("--rlim", type=float, nargs=2, default=None,
+                        metavar=("RMIN", "RMAX"),
+                        help="y-axis limits of the deviation panel; without "
+                             "it the panel follows its own points, which a "
+                             "single badly resolved mode can stretch")
     parser.add_argument("--xlog", action="store_true",
                         help="Use a logarithmic x-axis")
     parser.add_argument("--ylog", action="store_true",
@@ -310,7 +363,14 @@ def main() -> None:
     colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
     colors = [colors[i % len(colors)] for i in range(len(group_list))]
 
-    fig, ax = plt.subplots()
+    # The deviation panel shares the x axis of the plot proper, so the two are
+    # read as one figure: the panel is only ever looked at at the momentum of
+    # a point above it.
+    if args.ratio_panel:
+        fig, ax, rax = plot_style.deviation_panel()
+    else:
+        fig, ax = plt.subplots()
+        rax = None
 
     # eta and Lam are fixed within a series, so the rFRG expectation
     # etaR = sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) is a single number per series:
@@ -318,20 +378,27 @@ def main() -> None:
     # two finite-volume ones (in 2D no L=infinity value exists and only the
     # band is drawn). It has no momentum dependence whatsoever, which is the
     # point of comparison here. When every series shares (eta, Lam) there is
-    # only one expectation, drawn neutrally so it is not mistaken for one
-    # series' own; otherwise each gets its own in its color. Either way the
-    # lines go down first, so the measured points sit on top of them.
+    # only one expectation, drawn in the red of the tabulated flow (the same
+    # theory, without its self-consistent k dependence) rather than in the
+    # color of any one series; otherwise each series gets its own in its own
+    # color. Either way it is dashed, and the lines go down first, so the
+    # measured points sit on top of them.
     shared_theory = len({(f.eta, f.lam, f.dim) for f in fits}) == 1
     if args.theory:
         for i, members in enumerate(group_list):
             ref = members[0]
+            # The expectation takes the red of the tabulated flow, the bare
+            # eta stays neutral; with several expectations both follow their
+            # own series instead.
             color = "black" if shared_theory else colors[i]
+            theory_color = "tab:red" if shared_theory else colors[i]
             first = i == 0
             # The whole plot is divided by the series' own bare eta, so the
             # bare line sits at 1 and the expectation at etaR/eta.
             scale = ref.eta
             if ref.etaR_inf is not None:
-                ax.axhline(ref.etaR_inf/scale, color=color, linewidth=0.8,
+                ax.axhline(ref.etaR_inf/scale, color=theory_color, ls="--",
+                           linewidth=0.8,
                            label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$, "
                                  if first else None)
             # ax.axhspan(min(ref.etaR1, ref.etaR2)/scale,
@@ -352,8 +419,29 @@ def main() -> None:
         ax.errorbar(x, y, yerr=yerr, fmt="o", capsize=3, color=color,
                     label=series_label(members[0], varying)
                           if len(group_list) > 1 or varying else "simulation")
+        if rax is not None:
+            # Both the point and its error bar are divided by the same
+            # reference, so the panel is the plot above rescaled point by
+            # point: the deviation is in units of the rFRG at that momentum.
+            ref = reference_ratio(members, x, args.rfrg)
+            rax.errorbar(x, y/ref - 1.0, yerr=yerr/ref, fmt="o", capsize=3,
+                         color=color)
+            missing = np.isnan(ref)
+            if missing.any():
+                print("warning: no deviation drawn at k/Lam = "
+                      + ", ".join(f"{v:g}" for v in x[missing])
+                      + f"; {args.rfrg} tabulates no etaR there")
 
-    ax.set_xlabel(r"$k/\Lambda$")
+    if rax is not None:
+        rax.axhline(0.0, color="black", linewidth=0.6)
+        rax.set_xlabel(r"$k/\Lambda$")
+        rax.set_ylabel(r"$\eta_R/\eta_R^{\mathrm{rFRG}} - 1$", fontsize=7)
+        # Few ticks: the panel is a fifth of the height of the plot above and
+        # its labels would otherwise run into each other. (Only --rlim gets
+        # this far; the centred limits below place their own two ticks.)
+        rax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3))
+    else:
+        ax.set_xlabel(r"$k/\Lambda$")
     ax.set_ylabel(r"$\eta_R/\eta$")
     if args.xlog:
         ax.set_xscale('log')
@@ -385,8 +473,21 @@ def main() -> None:
         ax.set_xlim(*args.xlim)
     if args.ylim is not None:
         ax.set_ylim(*args.ylim)
+    if rax is not None:
+        if args.rlim is not None:
+            rax.set_ylim(*args.rlim)
+        else:
+            plot_style.center_panel(rax)
     ax.legend()
     fig.tight_layout(pad=0.2)
+    if rax is not None:
+        # tight_layout picks its own gap between the two panels; theirs is the
+        # one of the style file, which is the same in every such figure.
+        fig.subplots_adjust(hspace=plot_style.PANEL_HSPACE)
+        # Last, once both axes have the size they will be drawn at: how many
+        # ticks the default locator offers depends on it, and freezing them
+        # any earlier freezes the ticks of a differently sized axis.
+        plot_style.tidy_panel_ticks(ax, rax)
 
     if args.output is not None:
         fig.savefig(args.output)
