@@ -242,14 +242,13 @@ def main() -> None:
         else:
             plot_style.center_panel(rax)
     ax.legend()
-    fig.tight_layout(pad=0.2)
     if rax is not None:
-        # tight_layout picks its own gap between the two panels; theirs is
-        # the one of the style file, which is the same in every such figure.
-        # The ticks are tidied last, once both axes have the size they will be
-        # drawn at: how many ticks the default locator offers depends on it.
-        fig.subplots_adjust(hspace=plot_style.PANEL_HSPACE)
-        plot_style.tidy_panel_ticks(ax, rax)
+        # The layout of a figure with a panel is the shared one: a square plot
+        # over the panel, the gap of the style file between them, and the
+        # ticks of both tidied once they have their final size.
+        plot_style.finish_panel_figure(fig, ax, rax)
+    else:
+        fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)

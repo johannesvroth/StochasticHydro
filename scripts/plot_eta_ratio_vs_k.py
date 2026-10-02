@@ -91,6 +91,11 @@ FLOW_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
 #GROUP_FIELDS = ("lattice", "dt", "eta", "lam", "suffix")
 GROUP_FIELDS = ("lattice", "eta", "lam", "suffix")
 
+# The bare eta still separates series, but is not named in the legend: the
+# whole plot is drawn as etaR/eta of each series' own bare eta, so its value
+# says nothing about where the points sit.
+LABEL_FIELDS = tuple(f for f in GROUP_FIELDS if f != "eta")
+
 
 def read_flow(flow_dir: Path):
     """Read the tabulated etaR(k) of a flow directory, returning
@@ -217,7 +222,7 @@ def field_label(fit, field: str) -> str:
     if field == "eta":
         return rf"$\eta = {fit.eta:g}$"
     if field == "lam":
-        return rf"$\Lambda = {fit.lam:g}$"
+        return rf"$a\Lambda = {fit.lam:g}$"
     if field == "suffix":
         return "no ideal step" if fit.suffix == "x" else "ideal step"
     raise ValueError(f"unknown field {field}")
@@ -225,7 +230,7 @@ def field_label(fit, field: str) -> str:
 
 def series_label(fit, fields) -> str:
     """Legend entry naming `fields` of this series, e.g.
-    "$32^3$, dt = 10, $\\eta = 0.0707107$, $\\Lambda = 0.4$"."""
+    "$32^3$, dt = 10, $\\eta = 0.0707107$, $a\\Lambda = 0.4$"."""
     return ", ".join(field_label(fit, f) for f in fields)
 
 
@@ -350,10 +355,10 @@ def main() -> None:
     # Name only what actually differs between the series; with a single series
     # there is nothing to distinguish, so it carries its full parameters.
     if len(groups) > 1:
-        varying = [f for f in GROUP_FIELDS
+        varying = [f for f in LABEL_FIELDS
                    if len({group_value(fit, f) for fit in fits}) > 1]
     else:
-        varying = [f for f in GROUP_FIELDS if f != "suffix"]
+        varying = [f for f in LABEL_FIELDS if f != "suffix"]
         if fits[0].suffix == "x":
             varying.append("suffix")
 
@@ -412,13 +417,19 @@ def main() -> None:
             if shared_theory:
                 break
 
-    for members, color in zip(group_list, colors):
+    for i, (members, color) in enumerate(zip(group_list, colors)):
         x = x_values(members)
         y = np.array([f.ratio for f in members])
         yerr = np.array([f.ratio_err for f in members])
+        # With nothing left to name -- series differing only in the bare eta,
+        # which the legend no longer carries -- one entry stands for all of
+        # them rather than the same word once per color.
+        if varying:
+            label = series_label(members[0], varying)
+        else:
+            label = "simulation" if i == 0 else None
         ax.errorbar(x, y, yerr=yerr, fmt="o", capsize=3, color=color,
-                    label=series_label(members[0], varying)
-                          if len(group_list) > 1 or varying else "simulation")
+                    label=label)
         if rax is not None:
             # Both the point and its error bar are divided by the same
             # reference, so the panel is the plot above rescaled point by
@@ -434,15 +445,15 @@ def main() -> None:
 
     if rax is not None:
         rax.axhline(0.0, color="black", linewidth=0.6)
-        rax.set_xlabel(r"$k/\Lambda$")
-        rax.set_ylabel(r"$\eta_R/\eta_R^{\mathrm{rFRG}} - 1$", fontsize=7)
+        rax.set_xlabel(r"$p/\Lambda$")
+        rax.set_ylabel(r"$\Gamma_R(p)/\Gamma_R(p)^{\mathrm{rFRG}} - 1$", fontsize=7)
         # Few ticks: the panel is a fifth of the height of the plot above and
         # its labels would otherwise run into each other. (Only --rlim gets
         # this far; the centred limits below place their own two ticks.)
         rax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3))
     else:
-        ax.set_xlabel(r"$k/\Lambda$")
-    ax.set_ylabel(r"$\eta_R/\eta$")
+        ax.set_xlabel(r"$p/\Lambda$")
+    ax.set_ylabel(r"$\Gamma_R(p)/\Gamma(p)$")
     if args.xlog:
         ax.set_xscale('log')
     if args.ylog:
@@ -465,7 +476,7 @@ def main() -> None:
                       "1-loop perturbation theory", style="--")
         if args.rfrg is not None:
             draw_flow(ax, args.rfrg, fits, "tab:red",
-                      r"rFRG flow, self-consistent $k$-dep.")
+                      r"rFRG flow, self-consistent $p$-dep.")
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
 
@@ -479,15 +490,13 @@ def main() -> None:
         else:
             plot_style.center_panel(rax)
     ax.legend()
-    fig.tight_layout(pad=0.2)
     if rax is not None:
-        # tight_layout picks its own gap between the two panels; theirs is the
-        # one of the style file, which is the same in every such figure.
-        fig.subplots_adjust(hspace=plot_style.PANEL_HSPACE)
-        # Last, once both axes have the size they will be drawn at: how many
-        # ticks the default locator offers depends on it, and freezing them
-        # any earlier freezes the ticks of a differently sized axis.
-        plot_style.tidy_panel_ticks(ax, rax)
+        # The layout of a figure with a panel is the shared one: a square plot
+        # over the panel, the gap of the style file between them, and the
+        # ticks of both tidied once they have their final size.
+        plot_style.finish_panel_figure(fig, ax, rax)
+    else:
+        fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)

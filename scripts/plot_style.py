@@ -71,8 +71,8 @@ def deviation_panel(**kwargs):
     the
     panel comes out of the height of the plot rather than on top of it, so a
     figure with one is included in the paper exactly like a figure without.
-    The gap between the two is PANEL_HSPACE, to be set with
-    fig.subplots_adjust(hspace=...) after the figure has been laid out."""
+    The gap between the two is PANEL_HSPACE, applied by
+    finish_panel_figure() once the figure has been laid out."""
     fig, (ax, rax) = plt.subplots(2, 1, sharex=True,
                                   height_ratios=list(PANEL_HEIGHT_RATIOS),
                                   **kwargs)
@@ -121,3 +121,18 @@ def tidy_panel_ticks(ax, rax) -> None:
                 continue
             keep.append(t)
         axis.set_yticks(keep)
+
+
+def finish_panel_figure(fig, ax, rax, pad: float = 0.2) -> None:
+    """Lay out a deviation-panel figure and tidy its ticks.
+
+    The figure keeps the single-panel size of the style file, so the panel
+    comes out of the height of the plot rather than on top of it and a figure
+    with one is included in the paper exactly like a figure without. The ticks
+    are tidied last, once both axes have the size they will be drawn at: how
+    many ticks the default locator offers depends on it."""
+    fig.tight_layout(pad=pad)
+    # tight_layout picks its own gap between the two axes; theirs is the one
+    # of the style file, which is the same in every such figure.
+    fig.subplots_adjust(hspace=PANEL_HSPACE)
+    tidy_panel_ticks(ax, rax)
