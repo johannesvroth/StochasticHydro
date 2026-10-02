@@ -67,22 +67,38 @@ def lattice_label(nx: int, ny: int, nz: int) -> str:
     return rf"${nx} \times {ny} \times {nz}$"
 
 
-def legend_label(input_dir: Path, with_nk: bool = False) -> str:
+def dimension(nx: int, ny: int, nz: int) -> int:
+    """Number of spatial dimensions of the lattice, i.e. the number of
+    directions with more than one site: Nx32Ny1Nz32 is d = 2,
+    Nx32Ny32Nz32 is d = 3."""
+    return sum(1 for n in (nx, ny, nz) if n != 1)
+
+
+def inverse_reynolds(eta: float, lam: float, d: int,
+                     mass_density: float, temp: float) -> float:
+    r"""Inverse Reynolds number 1/Re = \eta / \sqrt{\rho T \Lambda^{d-2}}."""
+    return eta / np.sqrt(mass_density * temp * lam**(d - 2))
+
+
+def legend_label(input_dir: Path, mass_density: float, temp: float) -> str:
     r"""Legend entry for one directory, e.g.
-    "$32^3$, dt = 10, $\eta = 0.0707107$, $\Lambda = 0.4$".
+    "$32^3$, dt = 10, $1/\mathrm{Re} = 0.1118$, $\Lambda = 0.4$".
 
     The numbers are taken verbatim from the directory name, so the legend
-    shows exactly what the run used. The mode index is appended only when
-    asked for, i.e. when the directories do not share one and the y label
-    cannot carry it, and --no-ideal-step runs are marked as such; without
-    that two directories differing only in nk (or in the trailing "x") would
-    get the same legend entry."""
+    shows exactly what the run used, except for the viscosity, which is
+    converted into the inverse Reynolds number
+    1/Re = eta/sqrt(rho T Lambda^(d-2)) with d read off from the lattice
+    size. The mode index is always shown, and --no-ideal-step runs are
+    marked as such; without those, two directories differing only in nk (or
+    in the trailing "x") would get the same legend entry."""
     m = OBS_NAME_RE.match(input_dir.name)
-    label = (f"{lattice_label(int(m['nx']), int(m['ny']), int(m['nz']))}, "
+    nx, ny, nz = int(m["nx"]), int(m["ny"]), int(m["nz"])
+    inv_re = inverse_reynolds(float(m["eta"]), float(m["lam"]),
+                              dimension(nx, ny, nz), mass_density, temp)
+    label = (f"{lattice_label(nx, ny, nz)}, "
              #f"dt = {m['dt']}, "
-             rf"$\eta = {m['eta']}$, $\Lambda = {m['lam']}$")
-    if with_nk:
-        label += rf", $n_k = {m['nk']}$"
+             rf"$1/\mathrm{{Re}} = {inv_re:.4g}$, $a \Lambda = {m['lam']}$")
+    label += rf", $n_k = {m['nk']}$"
     if m["suffix"] == "x":
         label += ", no ideal step"
     return label
@@ -129,12 +145,7 @@ def main() -> None:
         args.output.parent.mkdir(exist_ok=True)
 
     single = len(args.input_dirs) == 1
-    # The mode index goes into the legend only when the y label
-    # cannot carry it, i.e. when the directories do not share one.
-    nk_varies = len({parse_obs_name(d)['nk']
-                     for d in args.input_dirs}) > 1
     fig, ax = plt.subplots()
-    nks = []
     for input_dir in args.input_dirs:
         obs_name = parse_obs_name(input_dir)
         eta = obs_name["eta"]
@@ -145,7 +156,6 @@ def main() -> None:
             raise SystemExit(f"No correlator files found in {input_dir}")
 
         meta = read_header(paths[0])
-        nks.append(meta["nk"])
 
         correlators = []
         time_diff = None
@@ -209,7 +219,7 @@ def main() -> None:
         theoryR_inf = args.temp * args.mass_density * np.exp(-dampR_inf * time_diff)
 
 #        if single:
-        label = legend_label(input_dir, with_nk=nk_varies)
+        label = legend_label(input_dir, args.mass_density, args.temp)
         line, = ax.plot(t_scaled, mean.real/C_eq, label=label)
         ax.fill_between(t_scaled, (mean.real - sem_re)/C_eq, (mean.real +sem_re)/C_eq,
                             color=line.get_color(), alpha=0.3)
@@ -219,7 +229,7 @@ def main() -> None:
         #         label=r"$\exp(-(\eta_R/\rho) \, \hat{\mathbf{k}}^2\, t)$, $L=\infty$")
         # else:
         #     first = input_dir is args.input_dirs[0]
-        #     label = legend_label(input_dir, with_nk=nk_varies)
+        #     label = legend_label(input_dir, args.mass_density, args.temp)
         #     line, = ax.plot(t_scaled, mean.real/C_eq, label=label)
         #     ax.fill_between(t_scaled, (mean.real - sem_re)/C_eq,
         #                      (mean.real + sem_re)/C_eq,
@@ -231,10 +241,7 @@ def main() -> None:
 
     ax.set_xlabel(r"$\Delta t / \tau$,  $\tau = \rho/(\eta \hat{\mathbf{k}}^2)$")
     #ylabel = r"$\frac{1}{T}\sum_T \frac{1}{12}\sum_{l \neq m} \sum_{\pm} \langle j_{l}^{*}(T+t,\pm k\mathbf{e}_m) j_{l}(T,\pm k\mathbf{e}_m)\rangle$"
-    if len(set(nks)) == 1:
-        ylabel = r"$C(\Delta t,k=$" f"{nks[0]:.0f}" r"$\pi/N)/\rho T V$"
-    else:
-        ylabel = r"$C(\Delta t)/\rho T V$"
+    ylabel = r"$C(\Delta t,k)/\rho T V$"
     ax.set_ylabel(ylabel)
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
