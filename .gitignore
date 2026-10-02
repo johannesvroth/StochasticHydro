@@ -19,6 +19,7 @@ sim
 sim-*/
 obs-*/
 avg-jp-time-corr-*
+avg-jpdot-time-corr-*
 figs/
 
 # Python
