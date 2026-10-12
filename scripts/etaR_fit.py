@@ -6,7 +6,8 @@ f(t) = Re sum_T jp(t) jp(t+T) by fitting the constant
 
     -dampR = -etaR (1 + eta_reg_uv(k_hat^2))/rho k_hat^2
 
-to the per-run logarithmic derivative d ln f(t)/dt. For an exponential decay
+to the logarithmic derivative d ln f(t)/dt of the run-averaged correlator.
+For an exponential decay
 f(t) ~ exp(-Gamma t) the log-derivative is the constant -Gamma, so the
 amplitude of the correlator drops out entirely and etaR is the only fit
 parameter.
@@ -37,16 +38,24 @@ the systematic. Each pass carries its own statistical error, and the second
 one is reported alongside its result. The second pass enters the error only:
 the quoted etaR is always the one from [tau, 2 tau]. It reaches further into
 the data, so it can fail the sample-count requirement where the first pass
-succeeded; there is then no systematic, and the summary says so. The
-statistical error is the run-to-run scatter, not the covariance of a single
-least-squares fit: neighboring points of the correlator are strongly
-correlated, so a fit that assumes independent points vastly underestimates the
-error, while the runs themselves are independent. The scatter is taken over
-the per-run solutions of the self-consistency condition -- each run gets its
-own tau and its own etaR = 1/(tau damp_per_eta) -- so that the uncertainty of
-tau is part of the error rather than held fixed across the runs; with
---tau-theory or a hand-picked window, where there is no condition to solve, it
-is the scatter of the per-run fits over the common window instead.
+succeeded; there is then no systematic, and the summary says so.
+
+The log-derivative is taken of the correlator averaged over the independent
+runs, not averaged over the log-derivatives of the single runs: f'/f is a
+nonlinear function of f, and a single run is far noisier than the mean, so
+differentiating the runs one by one biases the result and lets every run's
+own poles into the average. The statistical error is a delete-1 jackknife
+over the runs: the whole measurement is repeated on each of the N means with
+one run left out, and the error is sqrt((N-1)/N sum_i (x_i - x_.)^2) over
+those N results. It is not the covariance of a single least-squares fit:
+neighboring points of the correlator are strongly correlated, so a fit that
+assumes independent points vastly underestimates the error, while the runs
+themselves are independent. Each jackknife sample solves the
+self-consistency condition on its own -- it gets its own tau and its own
+etaR = 1/(tau damp_per_eta) -- so that the uncertainty of tau is part of the
+error rather than held fixed across the samples; with --tau-theory or a
+hand-picked window, where there is no condition to solve, the samples are
+fitted over the common window instead.
 
 Every plot script that measures etaR calls `fit_etaR` from here; do not copy
 the procedure into the scripts again. `add_fit_arguments` gives them the
@@ -122,6 +131,35 @@ def eta_reg_uv(k2, lam):
     return x - 1 if x > 1 else 0.0
 
 
+def jackknife_error(samples):
+    """Delete-1 jackknife error sqrt((n-1)/n sum_i (x_i - x_.)^2) from the n
+    leave-one-out estimates x_i stacked along axis 0; NaN samples are left
+    out, and n counts only the others."""
+    n = np.sum(~np.isnan(samples), axis=0)
+    return np.sqrt((n - 1)*np.nanvar(samples, axis=0))
+
+
+def log_derivative_jackknife(time_diff, correlators):
+    """The log-derivative f'/f of the run-averaged correlator, with its
+    delete-1 jackknife samples over the runs.
+
+    Returns (logd, logd_samples, logd_err, positive): logd of the mean over all
+    runs; logd_samples of shape (n_runs, n), row i the log-derivative of the
+    mean with run i left out (None for a single run, which has nothing to
+    leave out); their jackknife error (zero for a single run); and the mask of
+    points at which the full mean and every leave-one-out mean are positive,
+    since f'/f has a pole wherever one of them crosses zero."""
+    n_runs = len(correlators)
+    mean = correlators.mean(axis=0)
+    logd = np.gradient(mean, time_diff)/mean
+    if n_runs < 2:
+        return logd, None, np.zeros_like(logd), mean > 0
+    means = (correlators.sum(axis=0) - correlators)/(n_runs - 1)
+    logd_samples = np.gradient(means, time_diff, axis=1)/means
+    positive = (mean > 0) & np.all(means > 0, axis=0)
+    return logd, logd_samples, jackknife_error(logd_samples), positive
+
+
 def load_correlators(input_dir: Path):
     """Read every *.dat correlator in `input_dir` and return
     (time_diff, correlators, meta), with correlators of shape (n_runs, n) the
@@ -144,41 +182,49 @@ def load_correlators(input_dir: Path):
     return time_diff[:n_min], np.stack([c[:n_min] for c in correlators]), meta
 
 
-def fit_log_derivative(time_diff, log_derivatives, positive, damp_per_eta,
-                       eta, tmin, tmax, name=""):
-    """Fit the constant -etaR damp_per_eta to the per-run log-derivatives over
-    [tmin, tmax] and return (etaR, stat, sel, n_dropped).
+def fit_constant(time_diff, log_derivative, sel, damp_per_eta, eta):
+    """Unweighted fit of the constant -etaR damp_per_eta to one log-derivative
+    over the points `sel`; returns (etaR, its least-squares error)."""
+    model = lambda t, etaR: np.full_like(t, -etaR * damp_per_eta)
+    popt, pcov = curve_fit(model, time_diff[sel], log_derivative[sel],
+                           p0=(eta,), maxfev=10000)
+    return popt[0], np.sqrt(pcov[0, 0])
+
+
+def fit_log_derivative(time_diff, log_derivative, logd_samples, positive,
+                       damp_per_eta, eta, tmin, tmax, name=""):
+    """Fit the constant -etaR damp_per_eta to the log-derivative of the
+    run-averaged correlator over [tmin, tmax] and return
+    (etaR, stat, sel, n_dropped).
 
     The fit is unweighted: every point in the window enters with the same
-    weight. Points where any run has f <= 0 are dropped, f'/f has a pole
+    weight. Points where `positive` is False are dropped, f'/f has a pole
     there, and their number is returned.
 
     Neighboring points of the correlator are strongly correlated, so the
     covariance a single least-squares fit reports (which assumes independent
     points) vastly underestimates the error on etaR. The runs, in contrast,
-    are independent, so each is fitted separately and the scatter of the
-    fitted values is taken as the error. This is done for the error only: the
-    model is linear in etaR, so the mean of the per-run fits equals the fit of
-    the mean curve exactly."""
-    n_runs = len(log_derivatives)
+    are independent, so the error is a delete-1 jackknife over them: the fit
+    is repeated on each of the `logd_samples`, the log-derivatives of the
+    leave-one-out means, over the same window. With a single run there are
+    no samples, and the least-squares error is all there is."""
     sel = (time_diff >= tmin) & (time_diff <= tmax)
     n_dropped = int(np.sum(sel & ~positive))
     sel = sel & positive
     if not sel.any():
         raise SystemExit(f"No usable fit points in {name}: the window "
                          f"[{tmin:g}, {tmax:g}] contains no point at which "
-                         "all runs are positive")
+                         "the correlator and all its jackknife samples are "
+                         "positive")
 
-    model = lambda t, etaR: np.full_like(t, -etaR * damp_per_eta)
-    p0 = (eta,)
-    fits = np.array([curve_fit(model, time_diff[sel], run_logd[sel],
-                               p0=p0, maxfev=10000)[0][0]
-                     for run_logd in log_derivatives])
-    if n_runs > 1:
-        return fits.mean(), fits.std(ddof=1)/np.sqrt(n_runs), sel, n_dropped
-    popt, pcov = curve_fit(model, time_diff[sel], log_derivatives[0][sel],
-                           p0=p0, maxfev=10000)
-    return popt[0], np.sqrt(pcov[0, 0]), sel, n_dropped
+    etaR, lsq_err = fit_constant(time_diff, log_derivative, sel, damp_per_eta,
+                                 eta)
+    if logd_samples is None:
+        return etaR, lsq_err, sel, n_dropped
+    fits = np.array([fit_constant(time_diff, sample, sel, damp_per_eta,
+                                  eta)[0]
+                     for sample in logd_samples])
+    return etaR, float(jackknife_error(fits)), sel, n_dropped
 
 
 def usable_tau_range(time_diff, positive, tmin_factor=TMIN_FACTOR,
@@ -186,12 +232,13 @@ def usable_tau_range(time_diff, positive, tmin_factor=TMIN_FACTOR,
                      min_points: int = SELF_CONSISTENT_MIN_POINTS):
     """Smallest and largest window scale tau for which
     [tmin_factor tau, tmax_factor tau] is a usable fit window: wide enough to
-    hold `min_points` samples of the correlator, and early enough that no run
-    has crossed zero inside it, where f'/f has a pole.
+    hold `min_points` samples of the correlator, and early enough that
+    neither the mean correlator nor any of its jackknife samples has crossed
+    zero inside it, where f'/f has a pole.
 
     Only the contiguous positive stretch at the start of the correlator
-    counts: once a run has decayed into the noise and crossed zero, the
-    points beyond that crossing are noise whether they are positive or not.
+    counts: once it has decayed into the noise and crossed zero, the points
+    beyond that crossing are noise whether they are positive or not.
 
     The window spans (tmax_factor - tmin_factor) tau in time, so on the
     uniform grid of the correlator it holds that over dt, plus one, samples;
@@ -204,12 +251,12 @@ def usable_tau_range(time_diff, positive, tmin_factor=TMIN_FACTOR,
             t_end/tmax_factor)
 
 
-def solve_self_consistent_tau(time_diff, log_derivatives, positive,
+def solve_self_consistent_tau(time_diff, log_derivative, positive,
                               damp_per_eta, eta, tmin_factor=TMIN_FACTOR,
                               tmax_factor=TMAX_FACTOR, name=""):
     """Solve tau = 1/dampR(tau) for the correlation time tau, with dampR(tau)
-    the damping rate fitted over [tmin_factor tau, tmax_factor tau], and
-    return tau.
+    the damping rate fitted to `log_derivative` over
+    [tmin_factor tau, tmax_factor tau], and return tau.
 
     The condition is always the same -- the correlation time that scales the
     fit window is the one the fit over that window yields -- and the factors
@@ -262,9 +309,10 @@ def solve_self_consistent_tau(time_diff, log_derivatives, positive,
     def mismatch(tau):
         """tau dampR(tau) - 1: negative while the window still sits in the
         transient, positive once it has reached the exponential plateau."""
-        etaR = fit_log_derivative(time_diff, log_derivatives, positive,
-                                  damp_per_eta, eta, tmin_factor*tau,
-                                  tmax_factor*tau, name=name)[0]
+        sel = ((time_diff >= tmin_factor*tau) & (time_diff <= tmax_factor*tau)
+               & positive)
+        etaR = fit_constant(time_diff, log_derivative, sel, damp_per_eta,
+                            eta)[0]
         return tau*etaR*damp_per_eta - 1.0
 
     taus = np.geomspace(tau_min, tau_max, SELF_CONSISTENT_SCAN_POINTS)
@@ -293,33 +341,32 @@ def solve_self_consistent_tau(time_diff, log_derivatives, positive,
     return brentq(mismatch, lo, hi, xtol=xtol)
 
 
-def solve_self_consistent_etaR_per_run(time_diff, log_derivatives, positive,
-                                      damp_per_eta, eta,
-                                      tmin_factor=TMIN_FACTOR,
-                                      tmax_factor=TMAX_FACTOR, name=""):
-    """Solve the self-consistency condition for each run on its own and return
-    (etaR_per_run, n_unsolved): the per-run viscosities
-    etaR = 1/(tau damp_per_eta), with NaN where a run has no solution, and how
-    many those are.
+def solve_self_consistent_etaR_jackknife(time_diff, logd_samples, positive,
+                                         damp_per_eta, eta,
+                                         tmin_factor=TMIN_FACTOR,
+                                         tmax_factor=TMAX_FACTOR, name=""):
+    """Solve the self-consistency condition for each jackknife sample on its
+    own and return (etaR_samples, n_unsolved): the viscosities
+    etaR = 1/(tau damp_per_eta) of the leave-one-out means, with NaN where a
+    sample has no solution, and how many those are.
 
-    This is what the statistical error is taken from. Fitting the runs over
-    one common window would hold tau fixed and so leave the uncertainty of tau
-    itself out of the scatter; solving the condition run by run puts it in,
-    since a run that decays a little faster picks a correspondingly earlier
-    window.
+    This is what the statistical error is taken from. Fitting the samples
+    over one common window would hold tau fixed and so leave the uncertainty
+    of tau itself out of the error; solving the condition sample by sample
+    puts it in, since a sample that decays a little faster picks a
+    correspondingly earlier window.
 
     The usable range of tau stays the common one, from the points at which
-    every run is still positive, so that the runs are compared over the same
-    stretch of data and the scatter measures their decay rates rather than
-    how far each of them happens to be resolvable. A run whose mismatch never
+    the mean and every sample are still positive, so that the samples are
+    compared over the same stretch of data. A sample whose mismatch never
     crosses zero inside that range contributes no value and is counted
     instead."""
     etaRs = []
     n_unsolved = 0
-    for run_logd in log_derivatives:
+    for sample in logd_samples:
         try:
             tau = solve_self_consistent_tau(
-                time_diff, run_logd[None, :], positive, damp_per_eta, eta,
+                time_diff, sample, positive, damp_per_eta, eta,
                 tmin_factor, tmax_factor, name=name)
         except SystemExit:
             etaRs.append(np.nan)
@@ -329,34 +376,35 @@ def solve_self_consistent_etaR_per_run(time_diff, log_derivatives, positive,
     return np.array(etaRs), n_unsolved
 
 
-def self_consistent_fit(time_diff, log_derivatives, positive, damp_per_eta,
-                        eta, tmin_factor, tmax_factor, name=""):
+def self_consistent_fit(time_diff, log_derivative, logd_samples, positive,
+                        damp_per_eta, eta, tmin_factor, tmax_factor, name=""):
     """One complete self-consistent measurement over the window
-    [tmin_factor tau, tmax_factor tau]: solve the condition on all runs
-    together for the window, fit etaR over it, and take the statistical error
-    from the per-run solutions of the same condition.
+    [tmin_factor tau, tmax_factor tau]: solve the condition on the
+    run-averaged log-derivative for the window, fit etaR over it, and take
+    the statistical error from the jackknife samples, each solving the same
+    condition on its own.
 
-    Returns (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_per_run,
+    Returns (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_samples,
     n_unsolved). The whole procedure is run twice with different factors, and
     the difference of the two results is the systematic."""
-    tau = solve_self_consistent_tau(time_diff, log_derivatives, positive,
+    tau = solve_self_consistent_tau(time_diff, log_derivative, positive,
                                     damp_per_eta, eta, tmin_factor,
                                     tmax_factor, name=name)
     tmin, tmax = tmin_factor*tau, tmax_factor*tau
     etaR, stat, fit_sel, n_pole = fit_log_derivative(
-        time_diff, log_derivatives, positive, damp_per_eta, eta, tmin, tmax,
-        name=name)
+        time_diff, log_derivative, logd_samples, positive, damp_per_eta, eta,
+        tmin, tmax, name=name)
 
-    etaR_per_run = None
+    etaR_samples = None
     n_unsolved = 0
-    if len(log_derivatives) > 1:
-        etaR_per_run, n_unsolved = solve_self_consistent_etaR_per_run(
-            time_diff, log_derivatives, positive, damp_per_eta, eta,
+    if logd_samples is not None:
+        etaR_samples, n_unsolved = solve_self_consistent_etaR_jackknife(
+            time_diff, logd_samples, positive, damp_per_eta, eta,
             tmin_factor, tmax_factor, name=name)
-        n_solved = int(np.count_nonzero(~np.isnan(etaR_per_run)))
+        n_solved = int(np.count_nonzero(~np.isnan(etaR_samples)))
         if n_solved > 1:
-            stat = float(np.nanstd(etaR_per_run, ddof=1)/np.sqrt(n_solved))
-    return (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_per_run,
+            stat = float(jackknife_error(etaR_samples))
+    return (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_samples,
             n_unsolved)
 
 
@@ -364,7 +412,8 @@ def self_consistent_fit(time_diff, log_derivatives, positive, damp_per_eta,
 class EtaRFit:
     """One directory's etaR measurement, with everything the plot scripts need
     to draw it: the parsed run parameters, the loaded correlators and their
-    log-derivatives, the theory reference values and the fit result."""
+    log-derivative with its jackknife samples, the theory reference values
+    and the fit result."""
 
     name: str
     path: Path
@@ -384,7 +433,10 @@ class EtaRFit:
     # Data.
     time_diff: np.ndarray
     correlators: np.ndarray
-    log_derivatives: np.ndarray
+    # Log-derivative of the run-averaged correlator (logd_mean), of the
+    # leave-one-out means (logd_samples, None for a single run), and its
+    # jackknife error (logd_sem).
+    logd_samples: np.ndarray
     logd_mean: np.ndarray
     logd_sem: np.ndarray
     positive: np.ndarray
@@ -407,22 +459,22 @@ class EtaRFit:
     fit_sel: np.ndarray
     n_pole: int
     etaR: float
-    # Per-run solutions of the self-consistency condition, the scatter the
+    # Jackknife solutions of the self-consistency condition, the samples the
     # statistical error is taken from (None where the window did not come
-    # from the condition), and how many runs had no solution of their own.
-    etaR_per_run: np.ndarray
+    # from the condition), and how many samples had no solution of their own.
+    etaR_samples: np.ndarray
     n_unsolved: int
     stat: float
     syst: float
     # The second pass: same procedure over [SYST_TMIN_FACTOR, SYST_TMAX_FACTOR]
-    # tau, its own statistical error and its own per-run solutions. Their
+    # tau, its own statistical error and its own jackknife solutions. Their
     # difference from the first pass is the systematic. None where there is no
     # second pass: a hand-picked window, or one the condition could not solve.
     etaR_alt: float
     stat_alt: float
     fit_tmin_alt: float
     fit_tmax_alt: float
-    etaR_alt_per_run: np.ndarray
+    etaR_alt_samples: np.ndarray
     n_unsolved_alt: int
     chi2_dof: float
 
@@ -437,16 +489,17 @@ class EtaRFit:
 
     @property
     def n_solved(self) -> int:
-        """Runs that solved the self-consistency condition on their own."""
-        if self.etaR_per_run is None:
+        """Jackknife samples that solved the self-consistency condition on
+        their own."""
+        if self.etaR_samples is None:
             return 0
-        return int(np.count_nonzero(~np.isnan(self.etaR_per_run)))
+        return int(np.count_nonzero(~np.isnan(self.etaR_samples)))
 
     @property
-    def stat_from_per_run(self) -> bool:
-        """Whether the statistical error is the scatter of the per-run
-        self-consistent solutions rather than of fits over one common
-        window."""
+    def stat_from_self_consistent_samples(self) -> bool:
+        """Whether the statistical error is the jackknife over the
+        self-consistent solutions of the samples rather than over fits in one
+        common window."""
         return self.n_solved > 1
 
 
@@ -509,10 +562,12 @@ class EtaRFit:
                         f"gives {self.etaR_alt:g} +- {self.stat_alt:g}")
         pole_note = (f", dropped {self.n_pole} points with f <= 0"
                      if self.n_pole else "")
-        stat_label = "stat, per-run tau" if self.stat_from_per_run else "stat"
+        stat_label = ("stat, jackknife tau"
+                      if self.stat_from_self_consistent_samples
+                      else "stat, jackknife")
         unsolved_note = "".join(
-            f", {n} of {self.n_runs} runs without a self-consistent tau of "
-            f"their own in the {which} pass"
+            f", {n} of {self.n_runs} jackknife samples without a "
+            f"self-consistent tau of their own in the {which} pass"
             for n, which in ((self.n_unsolved, "first"),
                              (self.n_unsolved_alt, "second")) if n)
         chi2_note = ("" if self.chi2_dof is None
@@ -553,11 +608,12 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
     time_diff, correlators, meta = load_correlators(input_dir)
     n_runs = len(correlators)
 
-    # Per-run log-derivative f'/f, then mean and SEM across runs.
-    log_derivatives = np.gradient(correlators, time_diff, axis=1) / correlators
-    logd_mean = log_derivatives.mean(axis=0)
-    logd_sem = (log_derivatives.std(axis=0, ddof=1)/np.sqrt(n_runs)
-                if n_runs > 1 else np.zeros(len(time_diff)))
+    # Log-derivative f'/f of the run-averaged correlator, with its delete-1
+    # jackknife samples and error over the runs. f'/f has a pole wherever the
+    # mean or one of the samples crosses zero, so `positive` marks the points
+    # at which all of them are still positive.
+    logd_mean, logd_samples, logd_sem, positive = log_derivative_jackknife(
+        time_diff, correlators)
 
     k_hat = 2.0*np.sin(2*np.pi*meta["nk"]/meta["nx"]*0.5)
     damp_per_eta = (1 + eta_reg_uv(k_hat**2, lam))/mass_density * k_hat**2
@@ -580,15 +636,11 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
         etaR_tau = 0.5*(etaR1 + etaR2)
     tau_theory = 1.0/(etaR_tau*damp_per_eta)
 
-    # f'/f has a pole wherever a run's correlator crosses zero, so keep only
-    # points at which every run is still positive.
-    positive = np.all(correlators > 0, axis=0)
-
     # The measurement. With the self-consistent window it is made twice, over
     # [TMIN_FACTOR, TMAX_FACTOR] tau and over [SYST_TMIN_FACTOR,
     # SYST_TMAX_FACTOR] tau, each pass solving the condition tau = 1/dampR
     # over its own window and each carrying its own statistical error from the
-    # per-run solutions. The second window is the first one moved half a tau
+    # jackknife solutions. The second window is the first one moved half a tau
     # later, so the difference of the two results is what the placement of the
     # window is worth: that is the systematic. The first pass is the quoted
     # result.
@@ -596,9 +648,9 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
     # With --tau-theory or a hand-picked window there is no condition to
     # solve: the window is placed from theory and the second pass is the same
     # window moved half a tau later, as it was before the condition existed.
-    etaR_per_run = None
+    etaR_samples = None
     n_unsolved = 0
-    etaR_alt_per_run = None
+    etaR_alt_samples = None
     n_unsolved_alt = 0
     if use_theory_tau or fit_tmin is not None or fit_tmax is not None:
         tau = tau_theory
@@ -606,14 +658,14 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
         tmin = fit_tmin if fit_tmin is not None else TMIN_FACTOR*tau
         tmax = fit_tmax if fit_tmax is not None else TMAX_FACTOR*tau
         etaR, stat, fit_sel, n_pole = fit_log_derivative(
-            time_diff, log_derivatives, positive, damp_per_eta, eta, tmin,
-            tmax, name=input_dir.name)
+            time_diff, logd_mean, logd_samples, positive, damp_per_eta, eta,
+            tmin, tmax, name=input_dir.name)
         if fit_tmin is None and fit_tmax is None:
             tmin_alt = SYST_TMIN_FACTOR*tau
             tmax_alt = SYST_TMAX_FACTOR*tau
             etaR_alt, stat_alt = fit_log_derivative(
-                time_diff, log_derivatives, positive, damp_per_eta, eta,
-                tmin_alt, tmax_alt, name=input_dir.name)[:2]
+                time_diff, logd_mean, logd_samples, positive, damp_per_eta,
+                eta, tmin_alt, tmax_alt, name=input_dir.name)[:2]
             syst = abs(etaR - etaR_alt)
         else:
             etaR_alt = None
@@ -622,9 +674,9 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
             syst = 0.0
     else:
         self_consistent = True
-        (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_per_run,
+        (etaR, stat, tmin, tmax, fit_sel, n_pole, etaR_samples,
          n_unsolved) = self_consistent_fit(
-            time_diff, log_derivatives, positive, damp_per_eta, eta,
+            time_diff, logd_mean, logd_samples, positive, damp_per_eta, eta,
             TMIN_FACTOR, TMAX_FACTOR, name=input_dir.name)
         tau = tmin/TMIN_FACTOR
         # The second pass, over the same window half a tau later. It reaches
@@ -632,10 +684,10 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
         # there is then nothing to compare against and no systematic, which
         # the summary says.
         try:
-            (etaR_alt, stat_alt, tmin_alt, tmax_alt, _, _, etaR_alt_per_run,
+            (etaR_alt, stat_alt, tmin_alt, tmax_alt, _, _, etaR_alt_samples,
              n_unsolved_alt) = self_consistent_fit(
-                time_diff, log_derivatives, positive, damp_per_eta, eta,
-                SYST_TMIN_FACTOR, SYST_TMAX_FACTOR, name=input_dir.name)
+                time_diff, logd_mean, logd_samples, positive, damp_per_eta,
+                eta, SYST_TMIN_FACTOR, SYST_TMAX_FACTOR, name=input_dir.name)
             syst = abs(etaR - etaR_alt)
         except SystemExit:
             etaR_alt = None
@@ -643,8 +695,8 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
             tmin_alt = tmax_alt = None
             syst = 0.0
 
-    # chi^2/dof of the mean log-derivative against the fitted constant, using
-    # the SEM error bars; clip exact zeros to keep 1/sigma finite. The window
+    # chi^2/dof of the log-derivative against the fitted constant, using its
+    # jackknife error bars; clip exact zeros to keep 1/sigma finite. The window
     # holds only a few tens of points whose residuals are strongly correlated,
     # so chi2/dof scatters much more widely than 1 +- sqrt(2/dof) even when
     # the constant describes the data well: it is reported, not used as a cut.
@@ -661,16 +713,16 @@ def fit_etaR(input_dir: Path, mass_density: float = 1.0, temp: float = 1.0,
         lam=lam, nk=obs["nk"], suffix=obs["suffix"], dim=dim,
         mass_density=mass_density, temp=temp,
         time_diff=time_diff, correlators=correlators,
-        log_derivatives=log_derivatives, logd_mean=logd_mean,
+        logd_samples=logd_samples, logd_mean=logd_mean,
         logd_sem=logd_sem, positive=positive,
         k_hat=k_hat, damp_per_eta=damp_per_eta, tau_bare=tau_bare,
         etaR1=etaR1, etaR2=etaR2, etaR_inf=etaR_inf, etaR_tau=etaR_tau,
         tau=tau, tau_theory=tau_theory, self_consistent=self_consistent,
         fit_tmin=tmin, fit_tmax=tmax, fit_sel=fit_sel, n_pole=n_pole,
-        etaR=etaR, etaR_per_run=etaR_per_run,
+        etaR=etaR, etaR_samples=etaR_samples,
         n_unsolved=n_unsolved, stat=stat, syst=syst, etaR_alt=etaR_alt,
         stat_alt=stat_alt, fit_tmin_alt=tmin_alt, fit_tmax_alt=tmax_alt,
-        etaR_alt_per_run=etaR_alt_per_run, n_unsolved_alt=n_unsolved_alt,
+        etaR_alt_samples=etaR_alt_samples, n_unsolved_alt=n_unsolved_alt,
         chi2_dof=chi2_dof)
 
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Plot the logarithmic time derivative d ln f(t)/dt = f'(t)/f(t) of the real
 part f(t) of the time correlator sum_T jpx(t)*jpx(t+T) as a function of the
-time difference t, averaged over several runs with an error band from their
-run-to-run variation. For an exponential decay f(t) ~ exp(-Gamma t) this is
+time difference t, taken of the correlator averaged over several runs, with
+an error band from a delete-1 jackknife over the runs (the log-derivative of
+each mean with one run left out). For an exponential decay f(t) ~ exp(-Gamma t) this is
 the constant -Gamma. Only meaningful at small t, before f(t) decays into the
 noise; restrict the view with --xlim/--ylim.
 
@@ -143,12 +144,12 @@ def main() -> None:
                               "directory's own color")
     parser.add_argument("--plateau-window", type=float, nargs=2, default=None,
                          metavar=("T1", "T2"),
-                         help="Average the log-derivative per run over this time "
+                         help="Average the log-derivative over this time "
                               "window (chosen where the curve is flat: after the "
                               "early transient, before the correlator decays into "
                               "the noise), convert it to the renormalized shear "
                               "viscosity etaR = -<dln Re/dt>/(k_hat^2 "
-                              "(1+eta_reg_uv)/rho), print etaR +- SEM, and draw "
+                              "(1+eta_reg_uv)/rho), print etaR +- its jackknife error, and draw "
                               "the window and plateau level in the plot; given "
                               "in units of t, not of the scaled x axis")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
@@ -211,32 +212,22 @@ def main() -> None:
         # bare exponential decays as exp(-t/tau_bare) whatever eta and k are.
         tau_bare = 1.0/damp
 
-        # Per-run log-derivative f'/f, then mean and SEM across runs. Only valid
-        # at small t: once a run's f(t) decays into the noise and crosses zero,
-        # its f'/f blows up and mean and SEM become meaningless.
-        correlators = []
-        log_derivatives = []
-        time_diff = None
-        for path in paths:
-            t, re_part, im_part = np.loadtxt(path, unpack=True)
-            if time_diff is None:
-                time_diff = t
-            correlators.append(re_part)
-            log_derivatives.append(np.gradient(re_part, t) / re_part)
+        # Log-derivative f'/f of the run-averaged correlator, with a delete-1
+        # jackknife over the runs for its error, as in etaR_fit.py: the mean
+        # is differentiated, not the single runs, whose f'/f is far noisier
+        # and runs into poles much earlier. Only valid at small t: once f(t)
+        # decays into the noise and crosses zero, f'/f blows up.
+        time_diff, correlators, _ = etaR_fit.load_correlators(input_dir)
+        mean, logd_samples, sem, positive = \
+            etaR_fit.log_derivative_jackknife(time_diff, correlators)
 
-        n_min = min(len(d) for d in log_derivatives)
-        log_derivatives = np.stack([d[:n_min] for d in log_derivatives])
-        correlators = np.stack([c[:n_min] for c in correlators])
-        time_diff = time_diff[:n_min]
-
-        # The curve stops at the first zero-crossing of the correlator, where
-        # f'/f has a pole: only the contiguous stretch at the start over which
-        # every run is still positive is kept, the same criterion etaR_fit.py
-        # applies to its fit window. Beyond that crossing the run has decayed
-        # into the noise, and its log-derivative diverges and then wanders
-        # about, dragging mean and SEM with it whether the points that follow
-        # happen to be positive or not.
-        positive = np.all(correlators > 0, axis=0)
+        # The curve stops at the first zero-crossing of the mean correlator or
+        # of one of its jackknife samples, where f'/f has a pole: only the
+        # contiguous stretch at the start over which all of them are still
+        # positive is kept, the same criterion etaR_fit.py applies to its fit
+        # window. Beyond that crossing the correlator has decayed into the
+        # noise, and its log-derivative diverges and then wanders about
+        # whether the points that follow happen to be positive or not.
         crossings = np.flatnonzero(~positive)
         if crossings.size:
             n_keep = crossings[0]
@@ -247,17 +238,11 @@ def main() -> None:
             print(f"{input_dir.name}: correlator crosses zero at "
                   f"t = {time_diff[n_keep]:g}, plotting up to "
                   f"t = {time_diff[n_keep - 1]:g}")
-            log_derivatives = log_derivatives[:, :n_keep]
+            mean, sem = mean[:n_keep], sem[:n_keep]
+            if logd_samples is not None:
+                logd_samples = logd_samples[:, :n_keep]
             time_diff = time_diff[:n_keep]
-            n_min = n_keep
         t_scaled = time_diff/tau_bare
-
-        mean = log_derivatives.mean(axis=0)
-        n_runs = len(log_derivatives)
-        if n_runs > 1:
-            sem = log_derivatives.std(axis=0, ddof=1) / np.sqrt(n_runs)
-        else:
-            sem = np.zeros(n_min)
 
         label = legend_label(input_dir, with_nk=nk_varies)
         # The log-derivative is scaled by the same tau_bare as the time
@@ -372,12 +357,13 @@ def main() -> None:
                 raise SystemExit(f"Plateau window [{t1}, {t2}] contains no "
                                  f"data points of {input_dir.name}")
 
-            # Average the local rate per run over the window, then mean and
-            # SEM across runs, so the error includes the correlated noise.
-            per_run = log_derivatives[:, sel].mean(axis=1)
-            rate = per_run.mean()
-            if n_runs > 1:
-                rate_sem = per_run.std(ddof=1) / np.sqrt(n_runs)
+            # Average the local rate over the window, and the same average of
+            # every jackknife sample for its error, so that the error
+            # includes the correlated noise.
+            rate = mean[sel].mean()
+            if logd_samples is not None:
+                rate_sem = float(etaR_fit.jackknife_error(
+                    logd_samples[:, sel].mean(axis=1)))
             else:
                 rate_sem = 0.0
             etaR = -rate / damp_per_eta
