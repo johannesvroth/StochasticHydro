@@ -7,8 +7,7 @@ fitted, unweighted, to the per-run logarithmic derivative of the time
 correlator over the window [tau, 2 tau]. The plotted error bar is the
 statistical error (run-to-run scatter) and the systematic one (the shift when
 the same window is moved half a tau later) added in quadrature. Everything is
-drawn as the ratio to the bare eta of its own run, which is what makes series
-at different bare viscosities comparable at all.
+drawn as the ratio to the bare eta.
 
 The mode index nk and the cutoff Lam are parsed from the directory name, so
 each directory contributes one point, at the momentum k = 2 pi nk/N of its
@@ -19,35 +18,35 @@ mode in units of the cutoff, e.g.
         avg-jp-time-corr-Nx32Ny32Nz32dt10eta0.0707107Lam0.4nk2 \
         ...
 
-Directories that differ in anything but nk (lattice size, dt, eta, Lam, or the
-trailing "x" of a --no-ideal-step run) are drawn as separate series, each with
-its own color and its own theory band, and the legend names only the
-parameters that actually differ between them.
+All directories are one scan: they share the lattice size, eta, Lam and the
+trailing "x" of a --no-ideal-step run, and differ only in nk (and possibly in
+dt, which a scan may lower for the faster modes).
 
-The rFRG expectation etaR = sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) has no
-momentum dependence at all, so it is a horizontal line (with a band spanning
-the two finite-volume coefficients) and the bare eta is a second horizontal
-line, at 1 on this axis: any k dependence of the measured points is either the true momentum
-dependence of etaR or a lattice artifact of the mode. The damping rate the fit
+The expectation etaR = sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) has no
+momentum dependence at all, so it is a horizontal line, and the bare eta is a
+second horizontal line, at 1 on this axis: any k dependence of the measured
+points is either the true momentum dependence of etaR or a lattice artifact
+of the mode. The damping rate the fit
 measures goes with the lattice momentum k_hat = 2 sin(pi nk/N) rather than
 with k, and the two part company towards the edge of the Brillouin zone; k is
-what the plot shows, because it is the momentum the rFRG flow is a function
-of.
+what the plot shows, because it is the momentum the theory curves are a
+function of.
 
-Below the plot sits a small panel with the relative deviation of the
-measured points from the rFRG, (etaR - etaR^rFRG)/etaR^rFRG, carrying the same
-error bar divided by the same reference. Which rFRG that is follows what is
-drawn above: the tabulated flow of --rFRG when it is given, interpolated at
-the k of each point, and otherwise the momentum-independent expectation
-sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) of the point's own series.
+Momentum-dependent theory curves are drawn with --curves, each named in the
+legend by the matching entry of --curve-labels and optionally colored by the
+matching entry of --curve-colors, e.g.
 
-The momentum dependence the flow itself predicts is drawn on top with
---rFRG out-d3eta0.1Lam0.4mode0, and the one-loop truncation of the same flow
-with --PT out-d3eta0.1Lam0.4mode2: each directory holds the tabulated etaR(k)
-in etaIR.dat and names the flow's dimension, bare eta and cutoff, which is the
-only place they are recorded. The k of a curve is divided by the cutoff of the
-flow it came from, so a flow run at another Lam still lands where it belongs
-on the same dimensionless axis. The tables span decades in k while the lattice
+    --curves out-d3eta0.1Lam0.4mode2 out-d3eta0.1Lam0.4mode0 \
+    --curve-labels "1-loop" "RG improved 1-loop (self-consistent)" \
+    --curve-colors tab:green tab:orange
+
+Each directory holds the tabulated etaR(k) in etaIR.dat and names the
+dimension, bare eta and cutoff it was computed at, which is the only place
+they are recorded. The k of a curve is divided by its own cutoff, so a curve
+computed at another Lam still lands where it belongs on the same
+dimensionless axis. From back to front the plot holds the bare eta, the
+momentum-independent expectation, the curves in the order they are given and
+the measured points. The tables span decades in k while the lattice
 offers a handful of modes, so they are kept out of the autoscaling: the view
 still follows the measured points unless --xlim/--ylim say otherwise."""
 
@@ -57,6 +56,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 import plot_style
 import etaR_fit
@@ -72,47 +72,34 @@ AUTO_OUTPUT = Path("<auto>")
 # the run wrote its correlator often enough.
 MIN_FIT_POINTS = 3
 
-# A flow directory is named out-d3eta0.1Lam0.4mode0, with the trailing mode
-# selecting the truncation it was run in, and holds the tabulated etaR(k) in
-# etaIR.dat; the flow's parameters appear nowhere else. Which truncation a
-# directory holds is the caller's business: --rFRG and --PT differ only in the
-# curve they draw, not in how the directory is read.
 # Turns a correlator directory name into the run parameters the output file
 # is named after: avg-jp-time-corr-Nx64Ny64Nz64dt10eta0.05Lam0.2nk3 becomes
 # Nx64Ny64Nz64dt10eta0.05Lam0.2, with the "x" of a --no-ideal-step run kept.
 OUTPUT_STEM_RE = re.compile(r"^avg-jp-time-corr-|nk\d+(x?)$")
 
-FLOW_TABLE = "etaIR.dat"
-FLOW_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
+# A theory curve directory is named like out-d3eta0.1Lam0.4mode0 and holds the
+# tabulated etaR(k) in etaIR.dat; its parameters appear nowhere else. What the
+# curve is is the caller's business and named only in its legend label.
+CURVE_TABLE = "etaIR.dat"
+CURVE_NAME_RE = re.compile(rf"d(?P<dim>\d+)eta(?P<eta>{etaR_fit.FLOAT})"
                           rf"Lam(?P<lam>{etaR_fit.FLOAT})")
 
-# What identifies one series: everything a directory name carries except nk.
-# Directories agreeing in all of these are points of the same curve.
-#GROUP_FIELDS = ("lattice", "dt", "eta", "lam", "suffix")
-GROUP_FIELDS = ("lattice", "eta", "lam", "suffix")
 
-# The bare eta still separates series, but is not named in the legend: the
-# whole plot is drawn as etaR/eta of each series' own bare eta, so its value
-# says nothing about where the points sit.
-LABEL_FIELDS = tuple(f for f in GROUP_FIELDS if f != "eta")
-
-
-def read_flow(flow_dir: Path):
-    """Read the tabulated etaR(k) of a flow directory, returning
+def read_curve(curve_dir: Path):
+    """Read the tabulated etaR(k) of a theory curve directory, returning
     (k, etaR, params) with k sorted.
 
     The directory is named out-d3eta0.1Lam0.4mode0 and holds the two-column
     "# k etaR" file etaIR.dat. The dimension, the bare eta and the cutoff of
-    the flow are taken from that name: the table itself records none of them,
-    and the curve has to be divided by the eta the flow was run at, not by the
-    one of any series."""
-    flow_dir = Path(flow_dir)
-    path = flow_dir / FLOW_TABLE
+    the curve are taken from that name: the table itself records none of them,
+    and the curve has to be divided by the eta it was computed at, not by the
+    one of the scan."""
+    path = curve_dir / CURVE_TABLE
     if not path.exists():
-        raise SystemExit(f"No {FLOW_TABLE} in {flow_dir}")
-    m = FLOW_NAME_RE.search(flow_dir.name)
+        raise SystemExit(f"No {CURVE_TABLE} in {curve_dir}")
+    m = CURVE_NAME_RE.search(curve_dir.name)
     if m is None:
-        raise SystemExit(f"Cannot parse flow directory name '{flow_dir.name}': "
+        raise SystemExit(f"Cannot parse curve directory name '{curve_dir.name}': "
                          "expected the form out-d3eta0.1Lam0.4mode0")
     params = {"dim": int(m["dim"]), "eta": float(m["eta"]),
               "lam": float(m["lam"])}
@@ -121,84 +108,37 @@ def read_flow(flow_dir: Path):
     return k[order], etaR[order], params
 
 
-def check_flow_params(params, fits, flow_dir: Path) -> None:
-    """Report every parameter the flow was run at that no plotted series
-    shares: the curve is then a different theory rather than their
-    prediction, which is easy to miss once it is drawn next to the points."""
+def check_curve_params(params, ref, curve_dir: Path) -> None:
+    """Report every parameter the curve was computed at that the scan does not
+    share: the curve is then a different theory rather than its prediction,
+    which is easy to miss once it is drawn next to the points."""
     for name, value, field in (("d", params["dim"], "dim"),
                                ("eta", params["eta"], "eta"),
                                ("Lam", params["lam"], "lam")):
-        values = {getattr(fit, field) for fit in fits}
-        if value not in values:
-            print(f"warning: {flow_dir} was run at {name} = {value:g}, the "
-                  "plotted series at "
-                  + ", ".join(f"{v:g}" for v in sorted(values)))
+        if value != getattr(ref, field):
+            print(f"warning: {curve_dir} was computed at {name} = {value:g}, the "
+                  f"scan at {getattr(ref, field):g}")
 
 
-def flow_x(k, params):
-    """Place the momenta of a flow on the x axis: its own k in units of the
-    cutoff it was run at."""
-    return k/params["lam"]
-
-
-def draw_flow(ax, flow_dir: Path, fits, color: str, label: str,
-              style: str = "-") -> None:
-    """Draw one tabulated flow as etaR/eta against k/Lam, in its own color.
+def draw_curve(ax, curve_dir: Path, ref, color, label: str) -> None:
+    """Draw one tabulated curve as etaR/eta against k/Lam, in its own color.
 
     Both the ratio and the axis are taken relative to the parameters of the
-    flow itself rather than of any measured series, so a flow run at another
-    eta or Lam is still drawn where it belongs."""
-    k, etaR, params = read_flow(flow_dir)
-    check_flow_params(params, fits, flow_dir)
-    ax.plot(flow_x(k, params), etaR/params["eta"], style, color=color,
-            label=label)
+    curve itself rather than of the scan, so a curve computed at another eta
+    or Lam is still drawn where it belongs. The curve is added as a bare artist,
+    which leaves the data limits alone: the table spans decades in k, and
+    letting it into the autoscaling would squeeze the measured points into a
+    corner."""
+    k, etaR, params = read_curve(curve_dir)
+    check_curve_params(params, ref, curve_dir)
+    ax.add_artist(Line2D(k/params["lam"], etaR/params["eta"], color=color,
+                         label=label))
 
 
-def flow_ratio_at(flow_dir: Path, x):
-    """etaR/eta of a tabulated flow at the plot's x = k/Lam, as an array with
-    nan wherever x lies outside the tabulated range.
-
-    The comparison is made between the two ratios rather than between the two
-    viscosities, so that a flow run at another bare eta is compared the way it
-    is drawn. The table spans decades in k and is read in the log of both, the
-    spacing it is written with being geometric."""
-    k, etaR, params = read_flow(flow_dir)
-    xs = flow_x(k, params)
-    ratio = etaR/params["eta"]
-    good = (xs > 0.0) & (ratio > 0.0)
-    xs, ratio = xs[good], ratio[good]
-    x = np.asarray(x, dtype=float)
-    out = np.full(x.shape, np.nan)
-    inside = (x > 0.0) & (x >= xs[0]) & (x <= xs[-1])
-    out[inside] = np.exp(np.interp(np.log(x[inside]), np.log(xs),
-                                   np.log(ratio)))
-    return out
-
-
-def reference_ratio(members, x, flow_dir):
-    """The rFRG etaR/eta the deviation panel measures the points against.
-
-    With a tabulated flow it is that flow at the momentum of each point; with
-    none it is the momentum-independent sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) of
-    the series itself, the horizontal line the points are drawn against above
-    (in 2D, where no L=infinity coefficient exists, the middle of the
-    finite-volume band)."""
-    if flow_dir is not None:
-        return flow_ratio_at(flow_dir, x)
-    ref = members[0]
-    etaR = ref.etaR_inf if ref.etaR_inf is not None \
-        else 0.5*(ref.etaR1 + ref.etaR2)
-    return np.full(np.shape(x), etaR/ref.eta)
-
-
-def group_value(fit, field):
-    if field == "lattice":
-        return (fit.nx, fit.ny, fit.nz)
-    return getattr(fit, field)
-
-
-def group_key(fit):
-    return tuple(group_value(fit, f) for f in GROUP_FIELDS)
+def scan_key(fit):
+    """Everything a point of the scan shares with all the others: all the
+    directory name carries but nk and dt."""
+    return (fit.nx, fit.ny, fit.nz, fit.eta, fit.lam, fit.suffix)
 
 
 def lattice_label(nx: int, ny: int, nz: int) -> str:
@@ -214,24 +154,14 @@ def lattice_label(nx: int, ny: int, nz: int) -> str:
     return rf"${nx} \times {ny} \times {nz}$"
 
 
-def field_label(fit, field: str) -> str:
-    if field == "lattice":
-        return lattice_label(fit.nx, fit.ny, fit.nz)
-    if field == "dt":
-        return f"dt = {fit.dt:g}"
-    if field == "eta":
-        return rf"$\eta = {fit.eta:g}$"
-    if field == "lam":
-        return rf"$a\Lambda = {fit.lam:g}$"
-    if field == "suffix":
-        return "no ideal step" if fit.suffix == "x" else "ideal step"
-    raise ValueError(f"unknown field {field}")
-
-
-def series_label(fit, fields) -> str:
-    """Legend entry naming `fields` of this series, e.g.
-    "$32^3$, dt = 10, $\\eta = 0.0707107$, $a\\Lambda = 0.4$"."""
-    return ", ".join(field_label(fit, f) for f in fields)
+def scan_label(fit) -> str:
+    r"""Legend entry for the measured points, e.g. "$32^3$, $a\Lambda = 0.4$".
+    The bare eta is left out: the whole plot is drawn as etaR/eta, so its
+    value says nothing about where the points sit."""
+    label = rf"{lattice_label(fit.nx, fit.ny, fit.nz)}, $a\Lambda = {fit.lam:g}$"
+    if fit.suffix == "x":
+        label += ", no ideal step"
+    return label
 
 
 def x_values(fits):
@@ -285,218 +215,107 @@ def main() -> None:
                              "(nk, eta and Lam are parsed from the name); each "
                              "contributes one point")
     etaR_fit.add_fit_arguments(parser)
-    parser.add_argument("--rFRG", dest="rfrg", type=Path, default=None,
+    parser.add_argument("--curves", type=Path, nargs="+", default=[],
                         metavar="DIR",
-                        help="Draw the tabulated etaR(k) of an rFRG flow on "
-                             "top: a directory named like "
-                             "out-d3eta0.1Lam0.4mode0 holding the two-column "
-                             f"'# k etaR' file {FLOW_TABLE}. It is drawn "
-                             "against k/Lam of its own cutoff and does not "
-                             "take part in the autoscaling")
-    parser.add_argument("--PT", dest="pt", type=Path, default=None,
-                        metavar="DIR",
-                        help="The same for the one-loop truncation of the "
-                             "flow, a directory named like "
-                             "out-d3eta0.1Lam0.4mode2, drawn as one-loop "
-                             "perturbation theory")
+                        help="Theory curves to draw: directories named like "
+                             "out-d3eta0.1Lam0.4mode0, each holding the "
+                             f"two-column '# k etaR' file {CURVE_TABLE}. "
+                             "They are drawn against k/Lam of their own "
+                             "cutoff and do not take part in the autoscaling")
+    parser.add_argument("--curve-labels", nargs="+", default=[],
+                        metavar="NAME",
+                        help="Legend entries of the --curves, one each, in "
+                             "the same order")
+    parser.add_argument("--curve-colors", nargs="+", default=None,
+                        metavar="COLOR",
+                        help="Colors of the --curves, one each, in the same "
+                             "order, as any matplotlib color (tab:green, "
+                             "#ff0000, ...); without it they take the default "
+                             "color cycle after the color of the measured "
+                             "points")
     parser.add_argument("--no-theory", dest="theory", action="store_false",
-                        help="Do not draw the rFRG expectation and the bare "
-                             "eta")
-    parser.add_argument("--no-ratio", dest="ratio_panel",
-                        action="store_false",
-                        help="Do not draw the simulation/rFRG deviation panel "
-                             "below the plot")
+                        help="Do not draw the momentum-independent "
+                             "expectation and the bare eta")
     parser.add_argument("-o", "--output", type=Path, nargs="?", default=None,
                         const=AUTO_OUTPUT,
                         help="Save the plot to this file instead of showing "
                              "it; without an argument, save to "
                              "figs/eta-ratio-vs-k-<run parameters>.pdf, the "
                              "parameters being those of the first input "
-                             "directory without its nk (with -cmp<n> appended "
-                             "when the directories are not one single scan)")
+                             "directory without its nk")
     parser.add_argument("--xlim", type=float, nargs=2, default=None,
                         metavar=("XMIN", "XMAX"),
                         help="x-axis limits of the plot")
     parser.add_argument("--ylim", type=float, nargs=2, default=None,
                         metavar=("YMIN", "YMAX"),
                         help="y-axis limits of the plot")
-    parser.add_argument("--rlim", type=float, nargs=2, default=None,
-                        metavar=("RMIN", "RMAX"),
-                        help="y-axis limits of the deviation panel; without "
-                             "it the panel follows its own points, which a "
-                             "single badly resolved mode can stretch")
     parser.add_argument("--xlog", action="store_true",
                         help="Use a logarithmic x-axis")
     parser.add_argument("--ylog", action="store_true",
                         help="Use a logarithmic y-axis")
     args = parser.parse_args()
+    if len(args.curve_labels) != len(args.curves):
+        parser.error(f"{len(args.curves)} --curves but "
+                     f"{len(args.curve_labels)} --curve-labels")
+    if args.curve_colors is None:
+        # The measured points take C0, so the curves start at the next color.
+        args.curve_colors = [f"C{i + 1}" for i in range(len(args.curves))]
+    elif len(args.curve_colors) != len(args.curves):
+        parser.error(f"{len(args.curves)} --curves but "
+                     f"{len(args.curve_colors)} --curve-colors")
 
     if args.output is AUTO_OUTPUT:
         # The run parameters go into the file name verbatim from the first
         # directory, minus its nk: this plot scans the modes, so the mode
         # index is the one thing the name must not carry. A trailing "x" is
-        # kept, a --no-ideal-step scan is a different figure. Directories that
-        # differ in more than nk are several scans in one plot and would all
-        # claim the name of the first, so their number is appended.
-        stems = [OUTPUT_STEM_RE.sub(r"\1", d.name) for d in args.input_dirs]
-        stem = stems[0]
-        if len(set(stems)) > 1:
-            stem += f"-cmp{len(set(stems)) - 1}"
+        # kept, a --no-ideal-step scan is a different figure.
+        stem = OUTPUT_STEM_RE.sub(r"\1", args.input_dirs[0].name)
         args.output = Path("figs") / f"eta-ratio-vs-k-{stem}.pdf"
         args.output.parent.mkdir(exist_ok=True)
 
     fits = fit_all(args.input_dirs, args)
+    if len({scan_key(fit) for fit in fits}) > 1:
+        raise SystemExit("The directories are not one scan: they must agree in "
+                         "everything but nk and dt")
+    fits.sort(key=lambda f: f.nk)
+    ref = fits[0]
+    # The whole plot is divided by the bare eta, so the bare line sits at 1
+    # and the expectation at etaR/eta.
+    x = x_values(fits)
+    y = np.array([f.ratio for f in fits])
+    yerr = np.array([f.ratio_err for f in fits])
 
-    # One series per set of directories agreeing in everything but nk, in the
-    # order their first directory appeared on the command line.
-    groups = {}
-    for fit in fits:
-        groups.setdefault(group_key(fit), []).append(fit)
-    # Name only what actually differs between the series; with a single series
-    # there is nothing to distinguish, so it carries its full parameters.
-    if len(groups) > 1:
-        varying = [f for f in LABEL_FIELDS
-                   if len({group_value(fit, f) for fit in fits}) > 1]
-    else:
-        varying = [f for f in LABEL_FIELDS if f != "suffix"]
-        if fits[0].suffix == "x":
-            varying.append("suffix")
+    fig, ax = plt.subplots()
 
-    group_list = list(groups.values())
-    for members in group_list:
-        members.sort(key=lambda f: f.nk)
-    colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
-    colors = [colors[i % len(colors)] for i in range(len(group_list))]
-
-    # The deviation panel shares the x axis of the plot proper, so the two are
-    # read as one figure: the panel is only ever looked at at the momentum of
-    # a point above it.
-    if args.ratio_panel:
-        fig, ax, rax = plot_style.deviation_panel()
-    else:
-        fig, ax = plt.subplots()
-        rax = None
-
-    # eta and Lam are fixed within a series, so the rFRG expectation
-    # etaR = sqrt(eta^2 + 2 c_d T rho Lam^(d-2)) is a single number per series:
-    # a horizontal line at the L=infinity coefficient and a band between the
-    # two finite-volume ones (in 2D no L=infinity value exists and only the
-    # band is drawn). It has no momentum dependence whatsoever, which is the
-    # point of comparison here. When every series shares (eta, Lam) there is
-    # only one expectation, drawn in the red of the tabulated flow (the same
-    # theory, without its self-consistent k dependence) rather than in the
-    # color of any one series; otherwise each series gets its own in its own
-    # color. Either way it is dashed, and the lines go down first, so the
-    # measured points sit on top of them.
-    shared_theory = len({(f.eta, f.lam, f.dim) for f in fits}) == 1
+    # Back to front, which is also the order of the legend: the bare eta, the
+    # momentum-independent expectation etaR = sqrt(eta^2 + 2 c_d T rho
+    # Lam^(d-2)) (in 2D no L=infinity value exists and it is left out), the
+    # theory curves in the order given and, on top, the measured points.
     if args.theory:
-        for i, members in enumerate(group_list):
-            ref = members[0]
-            # The expectation takes the red of the tabulated flow, the bare
-            # eta stays neutral; with several expectations both follow their
-            # own series instead.
-            color = "black" if shared_theory else colors[i]
-            theory_color = "tab:red" if shared_theory else colors[i]
-            first = i == 0
-            # The whole plot is divided by the series' own bare eta, so the
-            # bare line sits at 1 and the expectation at etaR/eta.
-            scale = ref.eta
-            if ref.etaR_inf is not None:
-                ax.axhline(ref.etaR_inf/scale, color=theory_color, ls="--",
-                           linewidth=0.8,
-                           label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$, "
-                                 if first else None)
-            # ax.axhspan(min(ref.etaR1, ref.etaR2)/scale,
-            #            max(ref.etaR1, ref.etaR2)/scale,
-            #            color=color, alpha=0.3,
-            #            label=r"rFRG $\sqrt{\eta^2 + 2c_d T\rho\Lambda}$"
-            #                  if first else None)
-            ax.axhline(ref.eta/scale, color=color, ls="--", alpha=0.7,
-                       linewidth=0.8,
-                       label=r"bare $\eta$" if first else None)
-            if shared_theory:
-                break
+        ax.axhline(1.0, color="black", ls="--", alpha=0.7, linewidth=1.2)
+        # if ref.etaR_inf is not None:
+        #     ax.axhline(ref.etaR_inf/ref.eta, color="tab:red", ls="--",
+        #                linewidth=1.2,
+        #                label=r"$\eta_R = \sqrt{\eta^2 + 2c_d T\rho\Lambda}$")
+    for curve_dir, label, color in zip(args.curves, args.curve_labels,
+                                       args.curve_colors):
+        draw_curve(ax, curve_dir, ref, color, label)
+    ax.errorbar(x, y, yerr=yerr, fmt="o", capsize=3, color="C0",
+                label=scan_label(ref))
 
-    for i, (members, color) in enumerate(zip(group_list, colors)):
-        x = x_values(members)
-        y = np.array([f.ratio for f in members])
-        yerr = np.array([f.ratio_err for f in members])
-        # With nothing left to name -- series differing only in the bare eta,
-        # which the legend no longer carries -- one entry stands for all of
-        # them rather than the same word once per color.
-        if varying:
-            label = series_label(members[0], varying)
-        else:
-            label = "simulation" if i == 0 else None
-        ax.errorbar(x, y, yerr=yerr, fmt="o", capsize=3, color=color,
-                    label=label)
-        if rax is not None:
-            # Both the point and its error bar are divided by the same
-            # reference, so the panel is the plot above rescaled point by
-            # point: the deviation is in units of the rFRG at that momentum.
-            ref = reference_ratio(members, x, args.rfrg)
-            rax.errorbar(x, y/ref - 1.0, yerr=yerr/ref, fmt="o", capsize=3,
-                         color=color)
-            missing = np.isnan(ref)
-            if missing.any():
-                print("warning: no deviation drawn at k/Lam = "
-                      + ", ".join(f"{v:g}" for v in x[missing])
-                      + f"; {args.rfrg} tabulates no etaR there")
-
-    if rax is not None:
-        rax.axhline(0.0, color="black", linewidth=0.6)
-        rax.set_xlabel(r"$p/\Lambda$")
-        rax.set_ylabel(r"$\Gamma_R(p)/\Gamma_R(p)^{\mathrm{rFRG}} - 1$", fontsize=7)
-        # Few ticks: the panel is a fifth of the height of the plot above and
-        # its labels would otherwise run into each other. (Only --rlim gets
-        # this far; the centred limits below place their own two ticks.)
-        rax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3))
-    else:
-        ax.set_xlabel(r"$p/\Lambda$")
-    ax.set_ylabel(r"$\Gamma_R(p)/\Gamma(p)$")
+    ax.set_xlabel(r"$p/\Lambda$")
+    ax.set_ylabel(r"$\eta_R/\eta$")
     if args.xlog:
         ax.set_xscale('log')
     if args.ylog:
         ax.set_yscale('log')
 
-    # The tabulated curve runs over decades in k, orders of magnitude past the
-    # few modes the lattice has, so letting it into the autoscaling would
-    # squeeze the measured points into a corner. The view is fixed to those
-    # points first and restored afterwards; an explicit --xlim/--ylim below
-    # still moves it, which is how the rest of the curve is looked at.
-    if args.rfrg is not None or args.pt is not None:
-        ax.autoscale_view()
-        xlim, ylim = ax.get_xlim(), ax.get_ylim()
-        # Perturbation theory goes down first, so the rFRG flow it is meant
-        # to be compared against is drawn over it rather than hidden beneath
-        # it; the same green and dashes the other eta-ratio plots give the
-        # one-loop expression they draw analytically.
-        if args.pt is not None:
-            draw_flow(ax, args.pt, fits, "tab:green",
-                      "1-loop perturbation theory", style="--")
-        if args.rfrg is not None:
-            draw_flow(ax, args.rfrg, fits, "tab:red",
-                      r"rFRG flow, self-consistent $p$-dep.")
-        ax.set_xlim(*xlim)
-        ax.set_ylim(*ylim)
-
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
     if args.ylim is not None:
         ax.set_ylim(*args.ylim)
-    if rax is not None:
-        if args.rlim is not None:
-            rax.set_ylim(*args.rlim)
-        else:
-            plot_style.center_panel(rax)
     ax.legend()
-    if rax is not None:
-        # The layout of a figure with a panel is the shared one: a square plot
-        # over the panel, the gap of the style file between them, and the
-        # ticks of both tidied once they have their final size.
-        plot_style.finish_panel_figure(fig, ax, rax)
-    else:
-        fig.tight_layout(pad=0.2)
+    fig.tight_layout(pad=0.2)
 
     if args.output is not None:
         fig.savefig(args.output)
