@@ -96,6 +96,37 @@ def reference_inv_reR(inv_re, coeff_inf, inv_re_table, inv_reR_table):
     return np.sqrt(inv_re**2 + 2.0*coeff_inf)
 
 
+def lattice_label(nx: int, ny: int, nz: int) -> str:
+    r"""LaTeX for the lattice size: $32^3$ for a cubic lattice, $32^2 \times 10$
+    when one direction differs from the two others."""
+    dims = (nx, ny, nz)
+    if nx == ny == nz:
+        return rf"${nx}^3$"
+    for d in dims:
+        if dims.count(d) == 2:
+            odd = next(o for o in dims if o != d)
+            return rf"${d}^2 \times {odd}$"
+    return rf"${nx} \times {ny} \times {nz}$"
+
+
+def scan_key(fit):
+    """The parameters a legend entry stands for: the lattice and the cutoff
+    (and the 'x' suffix); eta varies along a scan and is the x axis."""
+    return (fit.nx, fit.ny, fit.nz, fit.lam, fit.suffix)
+
+
+def scan_label(fit) -> str:
+    r"""Legend entry for the simulation points, e.g. "$32^3$, $a\Lambda = 0.4$"."""
+    label = rf"{lattice_label(fit.nx, fit.ny, fit.nz)}, $a\Lambda = {fit.lam:g}$"
+    if fit.suffix == "x":
+        label += ", no ideal step"
+    return label
+
+
+# Colors of the simulation scans, skipping C1-C3, which the curves use.
+SCAN_COLORS = ["C0", "C4", "C5", "C6", "C7", "C8", "C9"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -155,10 +186,22 @@ def main() -> None:
     # finite-volume ones is not.
     _, _, coeff_inf = coefficients(3)
 
+    # Only the 3D theory is drawn, so only 3D lattices are accepted; checked
+    # before any fit, as etaR_fit tells them apart the same way, by Nz = 1.
+    flat = [d for d in args.input_dirs
+            if etaR_fit.parse_obs_name(d)["nz"] == 1]
+    if flat:
+        raise SystemExit("Only d = 3 is supported, but these directories are "
+                         "2D lattices: " + ", ".join(str(d) for d in flat))
+
     fits = etaR_fit.fit_dirs(args.input_dirs, args)
     inv_re_data = np.array([f.inv_reynolds for f in fits])
     inv_reR_data = np.array([f.inv_reynolds_r for f in fits])
     inv_reR_err = np.array([f.inv_reynolds_r_err for f in fits])
+    # 1/Re and 1/Re_R in terms of the bare and the renormalized viscosity,
+    # eta/sqrt(rho T Lam^(d-2)) and etaR/sqrt(rho T Lam^(d-2)) at d = 3.
+    inv_re_label = r"$1/Re$"
+    inv_reR_label = r"$\eta_R/\sqrt{\rho T \Lambda}$"
 
     if args.etaR_table is not None:
         if not args.etaR_table.exists():
@@ -199,40 +242,49 @@ def main() -> None:
 
     # Free theory etaR = eta, i.e. the diagonal the curves approach for Re -> 0.
     ax.plot(inv_re, inv_re, "--", color="black", alpha=0.7)
-    ax.plot(inv_re, curve_1loop, "--", color="tab:green",
-            label=r"1-loop perturbation theory") # ($\mathrm{Re}^{-1} + c_d\,\mathrm{Re}$)
-    ax.plot(inv_re, curve_inf, color="black",
-            label=r"rFRG $\sqrt{\mathrm{Re}^{-2} + 2c_d}$")
+    ax.plot(inv_re, curve_1loop, color="tab:green",
+            label=r"1-loop") # ($\mathrm{Re}^{-1} + c_d\,\mathrm{Re}$) $\eta_R = \eta + c_3 T\rho\Lambda/\eta$
+    ax.plot(inv_re, curve_inf, color="tab:orange",
+            label=r"RG improved 1-loop") # $\eta_R = \sqrt{\eta^2 + 2c_3 T\rho\Lambda}$
     if len(inv_re_table):
         # Straight segments between the tabulated eta, without markers.
         ax.plot(inv_re_table, inv_reR_table, "-", color="tab:red",
-                label=r"rFRG flow, self-consistent $\eta_\kappa(p)$")
-    if len(fits):
-        ax.errorbar(inv_re_data, inv_reR_data, yerr=inv_reR_err, fmt="o",
-                    capsize=3, color="C0", label="simulation")
+                label=r"RG improved 1-loop (self-consistent)")
+    # One legend entry and color per scan, i.e. per lattice and cutoff.
+    keys = [scan_key(f) for f in fits]
+    scans = []
+    for key in dict.fromkeys(keys):
+        idx = np.array([k == key for k in keys])
+        color = SCAN_COLORS[len(scans) % len(SCAN_COLORS)]
+        scans.append((idx, color))
+        ax.errorbar(inv_re_data[idx], inv_reR_data[idx], yerr=inv_reR_err[idx],
+                    fmt="o", capsize=3, color=color,
+                    label=scan_label(fits[keys.index(key)]))
     if rax is not None:
         # Both the point and its error bar are divided by the same reference,
         # so the panel is the plot above rescaled point by point: the
         # deviation is in units of the rFRG at that 1/Re.
         ref = reference_inv_reR(inv_re_data, coeff_inf, inv_re_table,
                                 inv_reR_table)
-        rax.errorbar(inv_re_data, inv_reR_data/ref - 1.0, yerr=inv_reR_err/ref,
-                     fmt="o", capsize=3, color="C0")
+        for idx, color in scans:
+            rax.errorbar(inv_re_data[idx], inv_reR_data[idx]/ref[idx] - 1.0,
+                         yerr=inv_reR_err[idx]/ref[idx], fmt="o", capsize=3,
+                         color=color)
         missing = np.isnan(ref)
         if missing.any():
             print("warning: no deviation drawn at 1/Re = "
                   + ", ".join(f"{v:g}" for v in inv_re_data[missing])
                   + f"; {args.etaR_table} tabulates no etaR there")
         rax.axhline(0.0, color="black", linewidth=0.6)
-        rax.set_xlabel(r"$1/\mathrm{Re}$")
-        rax.set_ylabel(r"$\eta_R/\eta_R^{\mathrm{rFRG}} - 1$", fontsize=7)
+        rax.set_xlabel(inv_re_label)
+        rax.set_ylabel(r"$\eta_R/\eta_R^{\mathrm{RG}} - 1$", fontsize=7)
         # Few ticks: the panel is a fifth of the height of the plot above and
         # its labels would otherwise run into each other. (Only --rlim gets
         # this far; the centred limits below place their own two ticks.)
         rax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3))
     else:
-        ax.set_xlabel(r"$1/\mathrm{Re}$")
-    ax.set_ylabel(r"$1/\mathrm{Re}_R$")
+        ax.set_xlabel(inv_re_label)
+    ax.set_ylabel(inv_reR_label)
     if args.xlim is not None:
         ax.set_xlim(*args.xlim)
     if args.xlog:
